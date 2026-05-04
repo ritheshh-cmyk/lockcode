@@ -10,7 +10,7 @@ from machine_id import get_machine_id
 # ============================================================
 # CONFIGURATION — Update these before building the EXE
 # ============================================================
-API_URL = "http://localhost:3000/api/validate"
+API_URL = "https://web-phi-taupe-97.vercel.app/api/validate"
 APP_SECRET = "lockapp-secret-2026"
 # ============================================================
 
@@ -33,7 +33,7 @@ def validate_registration(reg_key: str) -> dict:
         response = requests.post(
             API_URL,
             json={
-                "reg_key": reg_key.strip().upper(),
+                "reg_key": reg_key.strip(),
                 "machine_id": machine_id,
             },
             headers={
