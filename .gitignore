@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+web/node_modules/
+web/.next/
+
+# Environment
+.env
+.env.local
+web/.env.local
+
+# Build artifacts
+__pycache__/
+*.pyc
+dist/
+build/
+*.spec
+
+# Executables (too large for git)
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# PyInstaller temp
+_legacy/
