@@ -1,18 +1,24 @@
-"""Run schema.sql against the Supabase database."""
-import psycopg2
+"""Run schema.sql against the Supabase database. Uses DATABASE_URL env var."""
+import os, psycopg2
+from dotenv import load_dotenv
 
-conn = psycopg2.connect(
-    host="db.swdojmsuznofynwgssxs.supabase.co",
-    port=5432,
-    dbname="postgres",
-    user="postgres",
-    password="Lucky@9392404104",
-)
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
+db_url = os.environ.get("DATABASE_URL")
+if not db_url:
+    # Fallback: build from parts
+    db_url = (
+        f"postgresql://postgres:{os.environ['DB_PASSWORD']}"
+        f"@db.swdojmsuznofynwgssxs.supabase.co:5432/postgres"
+    )
+
+conn = psycopg2.connect(db_url)
 conn.autocommit = True
 cur = conn.cursor()
 
 # Read and execute schema
-with open("web/supabase/schema.sql", "r") as f:
+schema_path = os.path.join(os.path.dirname(__file__), "..", "web", "supabase", "schema.sql")
+with open(schema_path, "r") as f:
     sql = f.read()
 
 cur.execute(sql)
@@ -24,18 +30,9 @@ cur.execute(
     "WHERE table_name = 'licenses' ORDER BY ordinal_position"
 )
 rows = cur.fetchall()
-print(f'\nTable "licenses" created with {len(rows)} columns:')
+print(f'\nTable "licenses" has {len(rows)} columns:')
 for col_name, col_type in rows:
     print(f"  - {col_name} ({col_type})")
-
-# Check RLS
-cur.execute(
-    "SELECT policyname, cmd FROM pg_policies WHERE tablename = 'licenses'"
-)
-policies = cur.fetchall()
-print(f"\nRLS policies ({len(policies)}):")
-for name, cmd in policies:
-    print(f"  - {name} ({cmd})")
 
 cur.close()
 conn.close()
