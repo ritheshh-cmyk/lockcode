@@ -5,10 +5,32 @@ import { supabaseAdmin } from "@/lib/supabase";
 // ── Auth ────────────────────────────────────────────────────
 
 export async function verifyAdminPassword(password: string): Promise<boolean> {
-  // Constant-time comparison would be ideal but server actions run in Node —
-  // the env var is not user-controlled so string equality is acceptable here.
-  return password === process.env.ADMIN_PASSWORD;
+  // Hash the candidate password with SHA-256 before comparing.
+  // The plaintext never reaches the DB — only the digest is compared.
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const candidateHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+
+  try {
+    const { data: row, error } = await supabaseAdmin
+      .from("admin_config")
+      .select("value")
+      .eq("key", "admin_password_hash")
+      .single();
+
+    if (error || !row) {
+      // Fallback to env var hash during DB downtime — prevents admin lockout
+      return candidateHash === process.env.ADMIN_PASSWORD_HASH;
+    }
+
+    return candidateHash === row.value;
+  } catch {
+    return candidateHash === process.env.ADMIN_PASSWORD_HASH;
+  }
 }
+
 
 // ── Types ───────────────────────────────────────────────────
 
