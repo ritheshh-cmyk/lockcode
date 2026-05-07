@@ -1,31 +1,119 @@
 @import "tailwindcss";
 
-:root {
-  --background: #0a0a0f;
-  --foreground: #ededed;
-}
+@theme {
+  --color-background:                 #07070f;
+  --color-surface:                    #0d0d1a;
+  --color-surface-dim:                #12131a;
+  --color-surface-bright:             #383940;
+  --color-surface-variant:            #33343c;
+  --color-surface-container-lowest:   #0c0e14;
+  --color-surface-container-low:      #1a1b22;
+  --color-surface-container:          #111120;
+  --color-surface-container-high:     #282a31;
+  --color-surface-container-highest:  #33343c;
+  --color-on-surface:                 #eaeeff;
+  --color-on-surface-variant:         #c4c5d5;
+  --color-on-background:              #e2e1eb;
+  --color-outline:                    #252540;
+  --color-outline-variant:            #434653;
+  --color-primary:                    #b5c4ff;
+  --color-on-primary:                 #00287c;
+  --color-primary-fixed:              #dce1ff;
+  --color-primary-fixed-dim:          #b5c4ff;
+  --color-primary-container:          #6c8fff;
+  --color-on-primary-container:       #002676;
+  --color-secondary:                  #ccbdff;
+  --color-secondary-container:        #4f2eae;
+  --color-tertiary:                   #2fd9f4;
+  --color-tertiary-container:         #00a4ba;
+  --color-success:                    #34d399;
+  --color-warning:                    #fbbf24;
+  --color-error:                      #f87171;
+  --color-error-container:            #93000a;
+  --color-on-error:                   #690005;
+  --color-surface-tint:               #b5c4ff;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-  --animate-fade-in: fade-in 0.3s ease-out;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "'JetBrains Mono'", "Fira Code", monospace;
+
+  --animate-fade-in: fade-in 0.22s ease-out;
+  --animate-entrance: fade-in-float 1.2s cubic-bezier(0.22,1,0.36,1) forwards;
+  --animate-indicator: indicator-blink 2s ease-in-out infinite;
+  --animate-portal-pulse: portal-pulse 4s ease-in-out infinite;
 }
 
 @keyframes fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in-float {
+  0%   { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes indicator-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+@keyframes portal-pulse {
+  0%, 100% { transform: scale(1);    opacity: 0.3; }
+  50%       { transform: scale(1.05); opacity: 0.6; }
+}
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes stagger-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes nav-slide {
+  from { transform: scaleY(0); opacity: 0; }
+  to   { transform: scaleY(1); opacity: 1; }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(181,196,255,0.2); }
+  50%       { box-shadow: 0 0 20px rgba(181,196,255,0.5); }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ── Animation utilities ────────────────────────────────── */
+.page-enter   { animation: page-enter 0.22s cubic-bezier(0.22,1,0.36,1) both; }
+.stagger-1    { animation: stagger-up 0.3s 0.04s cubic-bezier(0.22,1,0.36,1) both; }
+.stagger-2    { animation: stagger-up 0.3s 0.09s cubic-bezier(0.22,1,0.36,1) both; }
+.stagger-3    { animation: stagger-up 0.3s 0.14s cubic-bezier(0.22,1,0.36,1) both; }
+.stagger-4    { animation: stagger-up 0.3s 0.19s cubic-bezier(0.22,1,0.36,1) both; }
+.stagger-5    { animation: stagger-up 0.3s 0.24s cubic-bezier(0.22,1,0.36,1) both; }
+.hover-lift   { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+.hover-lift:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+.nav-active-bar { animation: nav-slide 0.2s ease both; transform-origin: top; }
+
+
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal; font-style: normal; font-size: 24px;
+  line-height: 1; letter-spacing: normal; text-transform: none;
+  display: inline-block; white-space: nowrap;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
 }
+
+.portal-ring {
+  box-shadow: 0 0 40px rgba(108,143,255,0.1), inset 0 0 20px rgba(108,143,255,0.05);
+}
+.portal-glow { filter: blur(60px); }
+.glow-text { text-shadow: 0 0 15px rgba(181,196,255,0.4); }
+
+html { color-scheme: dark; }
+
+body {
+  background-color: #07070f;
+  background-image: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(108,143,255,0.12), transparent);
+  color: var(--color-on-background);
+  font-family: var(--font-sans);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #252540; border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: #33343c; }

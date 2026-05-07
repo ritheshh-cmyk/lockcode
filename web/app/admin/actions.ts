@@ -5,6 +5,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 // ── Auth ────────────────────────────────────────────────────
 
 export async function verifyAdminPassword(password: string): Promise<boolean> {
+  // Constant-time comparison would be ideal but server actions run in Node —
+  // the env var is not user-controlled so string equality is acceptable here.
   return password === process.env.ADMIN_PASSWORD;
 }
 
@@ -19,9 +21,17 @@ export interface License {
   expires_at: string;
   is_active: boolean;
   label: string | null;
-  api_key: string | null;
   gemini_key: string | null;
   language: string | null;
+}
+
+// ── Guards ──────────────────────────────────────────────────
+
+/** Throw early if id is empty — prevents accidental full-table mutations. */
+function requireId(id: string, op: string): void {
+  if (!id || typeof id !== "string" || id.trim().length === 0) {
+    throw new Error(`${op}: id must not be empty`);
+  }
 }
 
 // ── CRUD Operations ─────────────────────────────────────────
@@ -29,7 +39,7 @@ export interface License {
 export async function fetchAllLicenses(): Promise<License[]> {
   const { data, error } = await supabaseAdmin
     .from("licenses")
-    .select("*")
+    .select("id, reg_key, label, gemini_key, language, expires_at, is_active, machine_id, activated_at, created_at")
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);
@@ -41,7 +51,6 @@ export async function createLicense(
   label: string,
   trialDays: number,
   trialHours: number,
-  apiKey: string,
   geminiKey: string,
   language: string
 ): Promise<License> {
@@ -61,20 +70,24 @@ export async function createLicense(
     .from("licenses")
     .insert({
       reg_key,
-      label: label || null,
+      label: label.trim() || null,
       expires_at,
-      api_key: apiKey || null,
-      gemini_key: geminiKey || null,
+      gemini_key: geminiKey.trim() || null,
       language: language || "Java",
     })
-    .select()
+    .select("id, reg_key, label, gemini_key, language, expires_at, is_active, machine_id, activated_at, created_at")
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    // Supabase unique violation code
+    if (error.code === "23505") throw new Error("Registration key already exists");
+    throw new Error(error.message);
+  }
   return data as License;
 }
 
 export async function revokeLicense(id: string): Promise<void> {
+  requireId(id, "revokeLicense");
   const { error } = await supabaseAdmin
     .from("licenses")
     .update({ is_active: false })
@@ -83,6 +96,7 @@ export async function revokeLicense(id: string): Promise<void> {
 }
 
 export async function resetLicense(id: string): Promise<void> {
+  requireId(id, "resetLicense");
   const { error } = await supabaseAdmin
     .from("licenses")
     .update({ machine_id: null, activated_at: null })
@@ -91,6 +105,7 @@ export async function resetLicense(id: string): Promise<void> {
 }
 
 export async function deleteLicense(id: string): Promise<void> {
+  requireId(id, "deleteLicense");
   const { error } = await supabaseAdmin
     .from("licenses")
     .delete()
@@ -98,23 +113,17 @@ export async function deleteLicense(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-export async function rotateApiKey(id: string, newApiKey: string): Promise<void> {
-  const { error } = await supabaseAdmin
-    .from("licenses")
-    .update({ api_key: newApiKey || null })
-    .eq("id", id);
-  if (error) throw new Error(error.message);
-}
-
 export async function rotateGeminiKey(id: string, newGeminiKey: string): Promise<void> {
+  requireId(id, "rotateGeminiKey");
   const { error } = await supabaseAdmin
     .from("licenses")
-    .update({ gemini_key: newGeminiKey || null })
+    .update({ gemini_key: newGeminiKey.trim() || null })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }
 
 export async function updateLanguage(id: string, language: string): Promise<void> {
+  requireId(id, "updateLanguage");
   const { error } = await supabaseAdmin
     .from("licenses")
     .update({ language: language || "Java" })
