@@ -6,13 +6,13 @@ import { supabaseAdmin } from "@/lib/supabase";
 
 export async function verifyAdminPassword(password: string): Promise<boolean> {
   // Hash the candidate password with SHA-256 before comparing.
-  // The plaintext never reaches the DB — only the digest is compared.
   const encoder = new TextEncoder();
   const data = encoder.encode(password);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const candidateHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 
+  // 1️⃣ Primary: verify against Supabase admin_config table (hash comparison)
   try {
     const { data: row, error } = await supabaseAdmin
       .from("admin_config")
@@ -20,16 +20,22 @@ export async function verifyAdminPassword(password: string): Promise<boolean> {
       .eq("key", "admin_password_hash")
       .single();
 
-    if (error || !row) {
-      // Fallback to env var hash during DB downtime — prevents admin lockout
-      return candidateHash === process.env.ADMIN_PASSWORD_HASH;
+    if (!error && row) {
+      return candidateHash === row.value;
     }
-
-    return candidateHash === row.value;
   } catch {
+    // table may not exist yet — fall through
+  }
+
+  // 2️⃣ Fallback: ADMIN_PASSWORD_HASH env var (hash comparison)
+  if (process.env.ADMIN_PASSWORD_HASH) {
     return candidateHash === process.env.ADMIN_PASSWORD_HASH;
   }
+
+  // 3️⃣ Last resort: ADMIN_PASSWORD plain text env var
+  return password === process.env.ADMIN_PASSWORD;
 }
+
 
 
 // ── Types ───────────────────────────────────────────────────
