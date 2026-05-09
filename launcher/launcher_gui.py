@@ -43,6 +43,7 @@ class RegistrationWindow:
         self.root.title("Authorization Required")
         self.root.configure(bg=BG)
         self.root.resizable(False, False)
+        self.root.attributes('-toolwindow', True)
 
         # Reduced window size
         w, h = 380, 345
