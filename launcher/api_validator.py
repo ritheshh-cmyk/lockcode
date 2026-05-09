@@ -45,7 +45,7 @@ def validate_registration(reg_key: str) -> dict:
                 "Content-Type": "application/json",
                 "X-App-Secret": APP_SECRET,
             },
-            timeout=10,
+            timeout=30,
         )
 
         # Try to parse JSON regardless of status code
