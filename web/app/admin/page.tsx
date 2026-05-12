@@ -8,7 +8,7 @@ import {
   revokeLicense,
   resetLicense,
   deleteLicense,
-  rotateGeminiKey,
+  updateLicense,
   updateLanguage,
   type License,
 } from "./actions";
@@ -144,7 +144,7 @@ export default function AdminPage() {
     );
   }
 
-  return <Dashboard />;
+  return <Dashboard onLogout={() => setAuthenticated(false)} />;
 }
 
 
@@ -233,7 +233,18 @@ function OverviewPage({licenses,loading,onEdit,onRevoke,onReset,onDelete,actionL
                   <td className="px-5 py-3.5">{lic.gemini_key
                     ?<span className="font-mono text-[13px] text-tertiary flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"/>{lic.gemini_key.slice(0,12)}...</span>
                     :<span className="font-mono text-[13px] text-warning flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">warning</span>Not set</span>}</td>
-                  <td className="px-5 py-3.5 text-on-surface font-mono text-xs">{lic.machine_id ? lic.machine_id.slice(0, 8) + "..." : <span className="text-on-surface-variant/50 italic">Unbound</span>}</td>
+                  <td className="px-5 py-3.5">
+                    {lic.machine_id ? (
+                      <div className="flex items-center gap-2 group/mac">
+                        <span className="text-on-surface font-mono text-xs truncate max-w-[120px]" title={lic.machine_id}>{lic.machine_id}</span>
+                        <button onClick={() => { navigator.clipboard.writeText(lic.machine_id||""); }} className="p-1 text-on-surface-variant hover:text-primary opacity-0 group-hover/mac:opacity-100 transition-all cursor-pointer">
+                          <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-on-surface-variant/50 italic text-xs">Unbound</span>
+                    )}
+                  </td>
                   <td className="px-5 py-3.5">
                     <select value={lic.language||"Java"} onChange={async e=>{await updateLanguage(lic.id,e.target.value);}} className="bg-transparent border-none text-sm text-on-surface-variant focus:ring-0 cursor-pointer hover:text-on-surface p-0 outline-none">
                       {["Java","Python","C++","C","JavaScript","C#","Go","Rust","Kotlin","Swift"].map(l=><option key={l} value={l} className="bg-surface">{l}</option>)}</select></td>
@@ -468,7 +479,7 @@ function SecurityPage() {
 }
 
 // â”€â”€ Main Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function Dashboard() {
+function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [licenses, setLicenses] = useState<License[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState<Page>("overview");
@@ -586,7 +597,7 @@ function Dashboard() {
           <div className="px-2 space-y-0.5 border-t border-outline/10 pt-3">
             <NavLink icon="shield" label="Security" active={page==="security"} onClick={()=>navigate("security")}/>
             <NavLink icon="dataset" label="API Key Pool" active={page==="apikeypool"} onClick={()=>navigate("apikeypool")}/>
-            <button onClick={() => setAuthenticated(false)} className="w-full flex items-center gap-3 py-3 px-4 text-error/80 hover:bg-error-container/10 transition-colors rounded-r-lg cursor-pointer border-r-4 border-transparent">
+            <button onClick={onLogout} className="w-full flex items-center gap-3 py-3 px-4 text-error/80 hover:bg-error-container/10 transition-colors rounded-r-lg cursor-pointer border-r-4 border-transparent">
               <span className="material-symbols-outlined text-[20px]">logout</span>
               <span className="text-xs font-semibold uppercase tracking-wider">Logout</span>
             </button>
@@ -611,7 +622,7 @@ function Dashboard() {
       </button>
 
       {showModal&&<AddKeyModal onClose={()=>setShowModal(false)} onCreated={()=>{setShowModal(false);showToast("License created!","success");loadLicenses();}}/>}
-      {rotateTarget&&<RotateKeyModal license={rotateTarget} onClose={()=>setRotateTarget(null)} onSaved={()=>{setRotateTarget(null);showToast("Key updated!","success");loadLicenses();}}/>}
+      {rotateTarget&&<EditKeyModal license={rotateTarget} onClose={()=>setRotateTarget(null)} onSaved={()=>{setRotateTarget(null);showToast("License updated!","success");loadLicenses();}}/>}
     </div>
   );
 }
@@ -682,32 +693,54 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
   );
 }
 
-// â”€â”€ Rotate Key Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function RotateKeyModal({license,onClose,onSaved}:{license:License;onClose:()=>void;onSaved:()=>void}) {
+// ── Edit Key Modal ──────────────────────────────────────────────────
+function EditKeyModal({license,onClose,onSaved}:{license:License;onClose:()=>void;onSaved:()=>void}) {
+  const [newLabel,setNewLabel]=useState(license.label||"");
   const [newGemini,setNewGemini]=useState(license.gemini_key||"");
+  const [addDays,setAddDays]=useState(0);
+  const [addHours,setAddHours]=useState(0);
   const [saving,setSaving]=useState(false); const [error,setError]=useState("");
+  
+  const inp="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface placeholder-on-surface-variant/40 focus:outline-none focus:border-primary/50 transition-colors text-sm";
+  
   async function handleSave(){
     setSaving(true);setError("");
-    try{await rotateGeminiKey(license.id,newGemini);onSaved();}
+    try{await updateLicense(license.id,newLabel,newGemini,addDays,addHours);onSaved();}
     catch(e){setError(e instanceof Error?e.message:"Failed");}
     setSaving(false);
   }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md" onClick={onClose}>
       <div className="bg-surface-container-low border border-outline/30 rounded-2xl p-7 w-full max-w-md shadow-2xl page-enter" onClick={e=>e.stopPropagation()}>
-        <h2 className="text-lg font-bold mb-1 text-on-surface">Update Gemini Key</h2>
+        <h2 className="text-lg font-bold mb-1 text-on-surface">Edit License</h2>
         <p className="text-on-surface-variant text-sm mb-5">
-          <code className="text-primary font-mono bg-primary/10 px-2 py-0.5 rounded">{license.reg_key}</code>
-          {license.label&&<span className="text-on-surface-variant/50"> â€” {license.label}</span>}
+          <code className="text-primary font-mono bg-primary/10 px-2 py-0.5 rounded border border-primary/20">{license.reg_key}</code>
         </p>
-        <label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Gemini API Key</label>
-        <input type="text" value={newGemini} onChange={e=>setNewGemini(e.target.value)} placeholder="AIzaâ€¦" autoFocus
-          className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono"/>
-        {error&&<p className="text-error text-sm mt-2">{error}</p>}
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Customer Label</label>
+            <input type="text" value={newLabel} onChange={e=>setNewLabel(e.target.value)} placeholder="e.g. John Doe" className={inp}/>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Gemini API Key</label>
+            <input type="text" value={newGemini} onChange={e=>setNewGemini(e.target.value)} placeholder="AIza..." 
+              className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono"/>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Add Duration (Extend Trial)</label>
+            <div className="flex gap-3">
+              <div className="flex-1"><input type="number" value={addDays} onChange={e=>setAddDays(Number(e.target.value))} min={0} className={inp}/><p className="text-xs text-on-surface-variant/40 mt-1 text-center">Days</p></div>
+              <div className="flex-1"><input type="number" value={addHours} onChange={e=>setAddHours(Number(e.target.value))} min={0} max={23} className={inp}/><p className="text-xs text-on-surface-variant/40 mt-1 text-center">Hours</p></div>
+            </div>
+          </div>
+          {error&&<p className="text-error text-sm mt-2">{error}</p>}
+        </div>
+
         <div className="flex gap-3 mt-6">
           <button onClick={onClose} className="flex-1 py-2.5 bg-surface-container hover:bg-surface-container-high border border-outline/50 rounded-lg text-sm text-on-surface-variant transition-colors cursor-pointer">Cancel</button>
           <button onClick={handleSave} disabled={saving} className="flex-1 py-2.5 bg-tertiary text-on-tertiary hover:brightness-110 rounded-lg text-sm font-semibold transition-all cursor-pointer disabled:opacity-50">
-            {saving?"Savingâ€¦":"Save Key"}</button>
+            {saving?"Saving...":"Save Changes"}</button>
         </div>
       </div>
     </div>

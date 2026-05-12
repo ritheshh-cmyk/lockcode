@@ -141,11 +141,41 @@ export async function deleteLicense(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-export async function rotateGeminiKey(id: string, newGeminiKey: string): Promise<void> {
-  requireId(id, "rotateGeminiKey");
+export async function updateLicense(
+  id: string,
+  label: string,
+  geminiKey: string,
+  addDays: number = 0,
+  addHours: number = 0
+): Promise<void> {
+  requireId(id, "updateLicense");
+
+  // Fetch current expiry to extend it
+  const { data: current, error: fetchErr } = await supabaseAdmin
+    .from("licenses")
+    .select("expires_at")
+    .eq("id", id)
+    .single();
+
+  if (fetchErr || !current) throw new Error("Failed to fetch license");
+
+  let newExpiresAt = current.expires_at;
+  if (addDays > 0 || addHours > 0) {
+    const totalMs = addDays * 24 * 60 * 60 * 1000 + addHours * 60 * 60 * 1000;
+    // Add to current expiry if it's in the future, otherwise add to current time
+    const baseTime = new Date(current.expires_at).getTime() > Date.now()
+      ? new Date(current.expires_at).getTime()
+      : Date.now();
+    newExpiresAt = new Date(baseTime + totalMs).toISOString();
+  }
+
   const { error } = await supabaseAdmin
     .from("licenses")
-    .update({ gemini_key: newGeminiKey.trim() || null })
+    .update({
+      label: label.trim() || null,
+      gemini_key: geminiKey.trim() || null,
+      expires_at: newExpiresAt
+    })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }
