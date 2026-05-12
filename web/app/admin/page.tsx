@@ -149,7 +149,7 @@ export default function AdminPage() {
 
 
 
-type Page = "overview"|"keyvault"|"audit"|"api"|"support"|"security"|"apikeypool";
+type Page = "overview"|"keyvault"|"audit"|"api"|"support"|"security"|"apikeypool"|"docs";
 
 // â”€â”€ Stat Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function StatCard({label,value,delta,deltaLabel,color,icon,cls}:{label:string;value:number|string;delta:string;deltaLabel:string;color:"success"|"error"|"warning";icon:string;cls?:string}) {
@@ -521,7 +521,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   }
 
   const pageTitle: Record<Page,string> = {
-    overview:"Dashboard",keyvault:"Key Vault",audit:"Audit Logs",api:"API Access",support:"Support",security:"Security",apikeypool:"API Key Pool"
+    overview:"Dashboard",keyvault:"Key Vault",audit:"Audit Logs",api:"API Access",support:"Support",security:"Security",apikeypool:"API Key Pool",docs:"Ecosystem Docs"
   };
 
   const nav: {id:Page;icon:string;label:string}[] = [
@@ -531,9 +531,13 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     {id:"audit",icon:"history",label:"Audit Logs"},
     {id:"api",icon:"api",label:"API Access"},
     {id:"support",icon:"help_outline",label:"Support"},
+    {id:"docs",icon:"schema",label:"Ecosystem"},
   ];
 
-  function navigate(p:Page) { setPage(p); }
+  function navigate(p:Page) {
+    if (p === "docs") { window.open("/docs", "_blank"); return; }
+    setPage(p);
+  }
 
   return (
     <div className="min-h-screen bg-background text-on-background">
