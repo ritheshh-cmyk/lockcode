@@ -705,7 +705,6 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
                 <select value={model} onChange={e=>setModel(e.target.value)} className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface text-sm focus:outline-none focus:border-primary/40 cursor-pointer">
                   <option value="gemini" className="bg-surface">Gemini (gemini-2.5-flash)</option>
                   <option value="meta/llama-3.3-70b-instruct" className="bg-surface">Llama 3.3 70B — Fast ~2s (NIM)</option>
-                  <option value="meta/llama-3.1-8b-instruct" className="bg-surface">Llama 3.1 8B — Fastest (NIM)</option>
                 </select></div>
               <div><label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Language</label>
                 <select value={language} onChange={e=>setLanguage(e.target.value)} className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface text-sm focus:outline-none focus:border-primary/40 cursor-pointer">
@@ -781,7 +780,6 @@ function EditKeyModal({license,onClose,onSaved}:{license:License;onClose:()=>voi
             <select value={newModel} onChange={e=>setNewModel(e.target.value)} className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface text-sm focus:outline-none focus:border-primary/40 cursor-pointer">
               <option value="gemini" className="bg-surface">Gemini (gemini-2.5-flash)</option>
               <option value="meta/llama-3.3-70b-instruct" className="bg-surface">Llama 3.3 70B — Fast ~2s (NIM)</option>
-              <option value="meta/llama-3.1-8b-instruct" className="bg-surface">Llama 3.1 8B — Fastest (NIM)</option>
             </select>
           </div>
           <div>
