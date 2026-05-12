@@ -13,24 +13,38 @@ def get_machine_id() -> str:
     Generate a deterministic machine ID by hashing hardware identifiers.
 
     Strategy (tries in order):
-      1. wmic csproduct UUID + wmic MAC address (Windows 7-11 23H2)
-      2. PowerShell Get-CimInstance (Windows 11 24H2+ where wmic is removed)
-      3. uuid.getnode() fallback (MAC-address based)
+      1. BIOS UUID via PowerShell (most stable, works on all Windows 10/11)
+      2. BIOS UUID via wmic (legacy fallback for Win7-10)
+      3. uuid.getnode() (MAC-based, last resort)
+
+    The BIOS UUID is tied to the motherboard and never changes unless
+    the BIOS is re-flashed. MAC addresses are deliberately excluded
+    from the primary hash because they shift when VPN/Docker/virtual
+    adapters are added or removed.
 
     Returns:
         str: 32-character hex string, stable across reboots on the same machine.
     """
+    bios_uuid = ""
+
+    # Try PowerShell first (works on Win10+ including 24H2)
     try:
-        cpu_uuid = _get_cpu_uuid()
-        mac_address = _get_primary_mac()
-        raw = f"{cpu_uuid}:{mac_address}"
+        bios_uuid = _get_bios_uuid_powershell()
     except Exception:
-        # Fallback: PowerShell CIM (Windows 11 24H2+)
+        pass
+
+    # Fallback to wmic (Win7-11 23H2)
+    if not bios_uuid:
         try:
-            raw = _get_ids_via_powershell()
+            bios_uuid = _get_cpu_uuid()
         except Exception:
-            # Last resort: MAC address only via Python stdlib
-            raw = str(uuid.getnode())
+            pass
+
+    if bios_uuid:
+        raw = f"BIOS:{bios_uuid}"
+    else:
+        # Last resort: MAC address only
+        raw = str(uuid.getnode())
 
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
@@ -67,21 +81,13 @@ def _get_primary_mac() -> str:
     raise ValueError("wmic nic returned no MAC address")
 
 
-def _get_ids_via_powershell() -> str:
-    """
-    PowerShell-based fallback for Windows 11 24H2+ (wmic removed).
-    Uses Get-CimInstance which is the modern replacement for wmic.
-    """
-    ps_cmd = (
-        "(Get-CimInstance Win32_ComputerSystemProduct).UUID + ':' + "
-        "((Get-CimInstance Win32_NetworkAdapter | "
-        "Where-Object { $_.MACAddress -ne $null } | "
-        "Select-Object -First 1).MACAddress)"
-    )
+def _get_bios_uuid_powershell() -> str:
+    """Extract BIOS UUID via PowerShell (Win10+ including 24H2)."""
+    ps_cmd = "(Get-CimInstance Win32_ComputerSystemProduct).UUID"
     out = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd])
-    if ":" in out and len(out) > 10:
+    if out and len(out) >= 16:
         return out
-    raise ValueError(f"PowerShell returned unexpected output: {out!r}")
+    raise ValueError(f"PowerShell returned unexpected UUID: {out!r}")
 
 
 if __name__ == "__main__":

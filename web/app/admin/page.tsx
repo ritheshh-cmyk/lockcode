@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -217,7 +217,7 @@ function OverviewPage({licenses,loading,onEdit,onRevoke,onReset,onDelete,actionL
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead className="bg-surface-container-high/50 text-on-surface-variant">
-              <tr>{["Key","Label","Gemini Key","Language","Status","Created","Actions"].map(h=>(
+              <tr>{["Key","Label","Gemini Key","Machine ID","Language","Status","Created","Actions"].map(h=>(
                 <th key={h} className={`px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider${h==="Actions"?" text-right":""}`}>{h}</th>
               ))}</tr>
             </thead>
@@ -233,6 +233,7 @@ function OverviewPage({licenses,loading,onEdit,onRevoke,onReset,onDelete,actionL
                   <td className="px-5 py-3.5">{lic.gemini_key
                     ?<span className="font-mono text-[13px] text-tertiary flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-tertiary"/>{lic.gemini_key.slice(0,12)}...</span>
                     :<span className="font-mono text-[13px] text-warning flex items-center gap-1.5"><span className="material-symbols-outlined text-[16px]">warning</span>Not set</span>}</td>
+                  <td className="px-5 py-3.5 text-on-surface font-mono text-xs">{lic.machine_id ? lic.machine_id.slice(0, 8) + "..." : <span className="text-on-surface-variant/50 italic">Unbound</span>}</td>
                   <td className="px-5 py-3.5">
                     <select value={lic.language||"Java"} onChange={async e=>{await updateLanguage(lic.id,e.target.value);}} className="bg-transparent border-none text-sm text-on-surface-variant focus:ring-0 cursor-pointer hover:text-on-surface p-0 outline-none">
                       {["Java","Python","C++","C","JavaScript","C#","Go","Rust","Kotlin","Swift"].map(l=><option key={l} value={l} className="bg-surface">{l}</option>)}</select></td>

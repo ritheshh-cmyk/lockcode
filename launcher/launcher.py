@@ -20,13 +20,16 @@ from cryptography.fernet import Fernet
 from launcher_gui import RegistrationWindow
 from machine_id import get_machine_id
 
+# PyQt5 app management
+from PyQt5.QtWidgets import QApplication
+
 # ============================================================
 # CONFIGURATION — Update before building the EXE
 # ============================================================
 APP_NAME         = "LockApp"
 BUNDLED_EXE_NAME = "ctfmon.exe"
 FERNET_KEY       = b"AkOMIsXmgK7veF1rKMv6c7NazPzYWrRwMAILVLGTG-M="
-SESSION_CACHE_HOURS = 3
+SESSION_CACHE_HOURS = 2
 # ============================================================
 
 
@@ -88,7 +91,7 @@ def _read_cached_session() -> dict | None:
         if expires <= now:
             return None
 
-        # 3-hour cache window
+        # 2-hour cache window
         cached_at = data.get("cached_at")
         if cached_at:
             cached_time = datetime.fromisoformat(cached_at)
@@ -272,8 +275,11 @@ def main():
 
         _launch_app(gemini_key, language)
 
+    app = QApplication(sys.argv)
+
     win = RegistrationWindow(on_success=on_success)
     win.run()
+    app.exec_()
 
 
 if __name__ == "__main__":
