@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   verifyAdminPassword,
   fetchAllLicenses,
@@ -481,6 +482,7 @@ function SecurityPage() {
 
 // â”€â”€ Main Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function Dashboard({ onLogout }: { onLogout: () => void }) {
+  const router = useRouter();
   const [licenses, setLicenses] = useState<License[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState<Page>("overview");
@@ -535,7 +537,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   ];
 
   function navigate(p:Page) {
-    if (p === "docs") { window.open("/docs", "_blank"); return; }
+    if (p === "docs") { router.push("/docs"); return; }
     setPage(p);
   }
 
