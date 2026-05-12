@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   // ── Look up license ──
   const { data: license, error } = await supabaseAdmin
     .from("licenses")
-    .select("id, reg_key, machine_id, gemini_key, language, expires_at, is_active")
+    .select("id, reg_key, machine_id, gemini_key, language, model, expires_at, is_active")
     .eq("reg_key", reg_key.trim())
     .single();
 
@@ -94,6 +94,7 @@ export async function POST(req: NextRequest) {
       expires_at: license.expires_at,
       gemini_key: license.gemini_key || null,
       language: license.language || "Java",
+      model: license.model || "gemini",
     });
   }
 
@@ -118,5 +119,6 @@ export async function POST(req: NextRequest) {
     expires_at: license.expires_at,
     gemini_key: license.gemini_key || null,
     language: license.language || "Java",
+    model: license.model || "gemini",
   });
 }

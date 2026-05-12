@@ -51,6 +51,7 @@ export interface License {
   label: string | null;
   gemini_key: string | null;
   language: string | null;
+  model: string | null;
 }
 
 // ── Guards ──────────────────────────────────────────────────
@@ -67,7 +68,7 @@ function requireId(id: string, op: string): void {
 export async function fetchAllLicenses(): Promise<License[]> {
   const { data, error } = await supabaseAdmin
     .from("licenses")
-    .select("id, reg_key, label, gemini_key, language, expires_at, is_active, machine_id, activated_at, created_at")
+    .select("id, reg_key, label, gemini_key, language, model, expires_at, is_active, machine_id, activated_at, created_at")
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);
@@ -80,7 +81,8 @@ export async function createLicense(
   trialDays: number,
   trialHours: number,
   geminiKey: string,
-  language: string
+  language: string,
+  model: string = "gemini"
 ): Promise<License> {
   const reg_key = regKey.trim();
   if (!/^\d{8}$/.test(reg_key)) {
@@ -102,8 +104,9 @@ export async function createLicense(
       expires_at,
       gemini_key: geminiKey.trim() || null,
       language: language || "Java",
+      model: model,
     })
-    .select("id, reg_key, label, gemini_key, language, expires_at, is_active, machine_id, activated_at, created_at")
+    .select("id, reg_key, label, gemini_key, language, model, expires_at, is_active, machine_id, activated_at, created_at")
     .single();
 
   if (error) {
@@ -146,7 +149,8 @@ export async function updateLicense(
   label: string,
   geminiKey: string,
   addDays: number = 0,
-  addHours: number = 0
+  addHours: number = 0,
+  model: string = "gemini"
 ): Promise<void> {
   requireId(id, "updateLicense");
 
@@ -174,7 +178,8 @@ export async function updateLicense(
     .update({
       label: label.trim() || null,
       gemini_key: geminiKey.trim() || null,
-      expires_at: newExpiresAt
+      expires_at: newExpiresAt,
+      model: model
     })
     .eq("id", id);
   if (error) throw new Error(error.message);

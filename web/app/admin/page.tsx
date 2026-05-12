@@ -217,7 +217,7 @@ function OverviewPage({licenses,loading,onEdit,onRevoke,onReset,onDelete,actionL
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead className="bg-surface-container-high/50 text-on-surface-variant">
-              <tr>{["Key","Label","Gemini Key","Machine ID","Language","Status","Created","Actions"].map(h=>(
+              <tr>{["Key","Label","API Key","Machine ID","Model","Language","Status","Created","Actions"].map(h=>(
                 <th key={h} className={`px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider${h==="Actions"?" text-right":""}`}>{h}</th>
               ))}</tr>
             </thead>
@@ -245,6 +245,7 @@ function OverviewPage({licenses,loading,onEdit,onRevoke,onReset,onDelete,actionL
                       <span className="text-on-surface-variant/50 italic text-xs">Unbound</span>
                     )}
                   </td>
+                  <td className="px-5 py-3.5 text-on-surface font-medium text-[13px]">{lic.model||"gemini"}</td>
                   <td className="px-5 py-3.5">
                     <select value={lic.language||"Java"} onChange={async e=>{await updateLanguage(lic.id,e.target.value);}} className="bg-transparent border-none text-sm text-on-surface-variant focus:ring-0 cursor-pointer hover:text-on-surface p-0 outline-none">
                       {["Java","Python","C++","C","JavaScript","C#","Go","Rust","Kotlin","Swift"].map(l=><option key={l} value={l} className="bg-surface">{l}</option>)}</select></td>
@@ -487,6 +488,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [rotateTarget, setRotateTarget] = useState<License | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<{message:string;type:"success"|"error"}|null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const loadLicenses = useCallback(async () => {
     setLoading(true);
@@ -543,8 +545,12 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       )}
 
       {/* Top Header */}
-      <header className="flex items-center px-6 py-3 w-full sticky top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-outline/30 shadow-sm gap-4">
-        <div className="flex items-center gap-3 mr-4">
+      <header className="flex items-center px-4 md:px-6 py-3 w-full sticky top-0 z-50 bg-surface/80 backdrop-blur-xl border-b border-outline/30 shadow-sm gap-3">
+        {/* Mobile hamburger */}
+        <button onClick={()=>setMobileNavOpen(o=>!o)} className="lg:hidden p-2 text-on-surface-variant hover:bg-white/5 rounded-lg transition-colors cursor-pointer">
+          <span className="material-symbols-outlined">{mobileNavOpen?"close":"menu"}</span>
+        </button>
+        <div className="flex items-center gap-3 mr-2">
           <div className="w-8 h-8 bg-gradient-to-br from-primary to-secondary-container rounded-lg flex items-center justify-center" style={{boxShadow:"0 0 15px rgba(181,196,255,0.3)"}}>
             <span className="material-symbols-outlined text-on-primary text-[20px]" style={{fontVariationSettings:"'FILL' 1"}}>lock</span>
           </div>
@@ -570,14 +576,43 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           </button>
         </nav>
         <div className="flex-1"/>
-        <div className="flex items-center gap-3">
-          <button className="p-2 text-on-surface-variant hover:bg-white/5 rounded-full transition-colors cursor-pointer"><span className="material-symbols-outlined">notifications</span></button>
-          <button className="p-2 text-on-surface-variant hover:bg-white/5 rounded-full transition-colors cursor-pointer"><span className="material-symbols-outlined">settings</span></button>
-          <button onClick={()=>setShowModal(true)} className="bg-primary text-on-primary px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 hover:brightness-110 active:scale-95 transition-all cursor-pointer" style={{boxShadow:"0 0 20px rgba(181,196,255,0.2)"}}>
-            <span className="material-symbols-outlined text-[18px]">add</span>Add Key
+        <div className="flex items-center gap-2">
+          <button className="hidden sm:flex p-2 text-on-surface-variant hover:bg-white/5 rounded-full transition-colors cursor-pointer"><span className="material-symbols-outlined">notifications</span></button>
+          <button className="hidden sm:flex p-2 text-on-surface-variant hover:bg-white/5 rounded-full transition-colors cursor-pointer"><span className="material-symbols-outlined">settings</span></button>
+          <button onClick={()=>setShowModal(true)} className="bg-primary text-on-primary px-3 md:px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 hover:brightness-110 active:scale-95 transition-all cursor-pointer" style={{boxShadow:"0 0 20px rgba(181,196,255,0.2)"}}>
+            <span className="material-symbols-outlined text-[18px]">add</span><span className="hidden sm:inline">Add Key</span>
           </button>
         </div>
       </header>
+
+      {/* Mobile slide-in nav drawer */}
+      {mobileNavOpen&&(
+        <div className="lg:hidden fixed inset-0 z-40" onClick={()=>setMobileNavOpen(false)}>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm"/>
+          <aside className="absolute left-0 top-0 h-full w-64 bg-surface-container-lowest border-r border-outline/20 flex flex-col pt-[57px] pb-24 z-50" onClick={e=>e.stopPropagation()}>
+            <div className="px-4 py-4 mb-2">
+              <div className="flex items-center gap-3 p-3 bg-surface-container-low rounded-xl border border-outline/10">
+                <div className="w-9 h-9 rounded-lg bg-surface-variant flex items-center justify-center">
+                  <span className="material-symbols-outlined text-primary" style={{fontVariationSettings:"'FILL' 1"}}>admin_panel_settings</span>
+                </div>
+                <div><p className="text-xs font-bold text-on-surface leading-none">Admin Console</p>
+                  <p className="text-[10px] text-on-surface-variant mt-0.5">TITAN v4 — Stable</p></div>
+              </div>
+            </div>
+            <nav className="flex-1 px-2 space-y-0.5">
+              {[...nav,{id:"security" as Page,icon:"shield",label:"Security"},{id:"apikeypool" as Page,icon:"dataset",label:"API Key Pool"}].map(n=>(
+                <NavLink key={n.id} icon={n.icon} label={n.label} active={page===n.id} onClick={()=>{navigate(n.id);setMobileNavOpen(false);}}/>
+              ))}
+            </nav>
+            <div className="px-2 border-t border-outline/10 pt-3">
+              <button onClick={()=>{onLogout();setMobileNavOpen(false);}} className="w-full flex items-center gap-3 py-3 px-4 text-error/80 hover:bg-error-container/10 transition-colors rounded-r-lg cursor-pointer border-r-4 border-transparent">
+                <span className="material-symbols-outlined text-[20px]">logout</span>
+                <span className="text-xs font-semibold uppercase tracking-wider">Logout</span>
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
 
       <div className="flex">
         {/* Sidebar */}
@@ -605,7 +640,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 lg:ml-64 p-6 pt-8">
+        <main className="flex-1 lg:ml-64 p-4 md:p-6 pt-6 md:pt-8 pb-24 lg:pb-8">
           {page==="overview"&&<OverviewPage licenses={licenses} loading={loading} onEdit={setRotateTarget} onRevoke={handleRevoke} onReset={handleReset} onDelete={handleDelete} actionLoading={actionLoading}/>}
           {page==="keyvault"&&<KeyVaultPage licenses={licenses} loading={loading} onEdit={setRotateTarget} onRevoke={handleRevoke} onDelete={handleDelete} actionLoading={actionLoading}/>}
           {page==="apikeypool"&&<APIKeyPoolPage/>}
@@ -616,10 +651,16 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </main>
       </div>
 
-      {/* Mobile FAB */}
-      <button onClick={()=>setShowModal(true)} className="lg:hidden fixed bottom-6 right-6 w-14 h-14 bg-primary text-on-primary rounded-full shadow-lg flex items-center justify-center z-50 active:scale-90 cursor-pointer" style={{boxShadow:"0 0 20px rgba(181,196,255,0.4)"}}>
-        <span className="material-symbols-outlined text-[24px]">add</span>
-      </button>
+      {/* Mobile bottom nav bar */}
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-surface/90 backdrop-blur-xl border-t border-outline/20 flex items-center justify-around px-2 py-1 safe-area-inset-bottom">
+        {[...nav.slice(0,4),{id:"security" as Page,icon:"shield",label:"Security"}].map(n=>(
+          <button key={n.id} onClick={()=>navigate(n.id)} className={`flex flex-col items-center gap-0.5 py-1.5 px-2 rounded-lg transition-all cursor-pointer min-w-[52px] ${
+            page===n.id?"text-primary":"text-on-surface-variant"}`}>
+            <span className="material-symbols-outlined text-[22px]" style={{fontVariationSettings:page===n.id?"'FILL' 1":"'FILL' 0"}}>{n.icon}</span>
+            <span className="text-[9px] font-semibold uppercase tracking-wider leading-none">{n.label.slice(0,6)}</span>
+          </button>
+        ))}
+      </nav>
 
       {showModal&&<AddKeyModal onClose={()=>setShowModal(false)} onCreated={()=>{setShowModal(false);showToast("License created!","success");loadLicenses();}}/>}
       {rotateTarget&&<EditKeyModal license={rotateTarget} onClose={()=>setRotateTarget(null)} onSaved={()=>{setRotateTarget(null);showToast("License updated!","success");loadLicenses();}}/>}
@@ -631,6 +672,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) {
   const [regKey,setRegKey]=useState(""); const [label,setLabel]=useState("");
   const [geminiKey,setGeminiKey]=useState(""); const [language,setLanguage]=useState("Java");
+  const [model,setModel]=useState("gemini");
   const [trialDays,setTrialDays]=useState(0); const [trialHours,setTrialHours]=useState(0);
   const [creating,setCreating]=useState(false); const [createdKey,setCreatedKey]=useState(""); const [error,setError]=useState("");
   const inp="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface placeholder-on-surface-variant/40 focus:outline-none focus:border-primary/50 transition-colors text-sm";
@@ -638,13 +680,13 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
     if (regKey.length!==8){setError("Key must be exactly 8 digits");return;}
     if (trialDays<=0&&trialHours<=0){setError("Set at least 1 day or 1 hour");return;}
     setCreating(true);setError("");
-    try{const r=await createLicense(regKey,label,trialDays,trialHours,geminiKey,language);setCreatedKey(r.reg_key);}
+    try{const r=await createLicense(regKey,label,trialDays,trialHours,geminiKey,language,model);setCreatedKey(r.reg_key);}
     catch(e){setError(e instanceof Error?e.message:"Failed to create");}
     setCreating(false);
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md" onClick={onClose}>
-      <div className="bg-surface-container-low border border-outline/30 rounded-2xl p-7 w-full max-w-md shadow-2xl page-enter" onClick={e=>e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-md" onClick={onClose}>
+      <div className="bg-surface-container-low border border-outline/30 rounded-t-2xl sm:rounded-2xl p-5 sm:p-7 w-full sm:max-w-md shadow-2xl page-enter max-h-[92vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
         {!createdKey?(
           <>
             <h2 className="text-lg font-bold mb-1 text-on-surface">Add License Key</h2>
@@ -657,8 +699,14 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
                 <p className="text-xs text-on-surface-variant/40 mt-1 text-center">{regKey.length}/8</p>
               </div>
               <div><label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Customer Label</label><input type="text" value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. John Doe" className={inp}/></div>
-              <div><label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Gemini API Key</label>
-                <input type="text" value={geminiKey} onChange={e=>setGeminiKey(e.target.value)} placeholder="AIzaâ€¦" className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono"/></div>
+              <div><label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Provider API Key</label>
+                <input type="text" value={geminiKey} onChange={e=>setGeminiKey(e.target.value)} placeholder="AIza... or nvapi-..." className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono"/></div>
+              <div><label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Model</label>
+                <select value={model} onChange={e=>setModel(e.target.value)} className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface text-sm focus:outline-none focus:border-primary/40 cursor-pointer">
+                  <option value="gemini" className="bg-surface">Gemini (gemini-2.5-flash)</option>
+                  <option value="meta/llama-3.3-70b-instruct" className="bg-surface">Llama 3.3 70B — Fast ~2s (NIM)</option>
+                  <option value="meta/llama-3.1-8b-instruct" className="bg-surface">Llama 3.1 8B — Fastest (NIM)</option>
+                </select></div>
               <div><label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Language</label>
                 <select value={language} onChange={e=>setLanguage(e.target.value)} className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface text-sm focus:outline-none focus:border-primary/40 cursor-pointer">
                   {["Java","Python","C++","C","JavaScript","C#","Go","Rust","Kotlin","Swift"].map(l=><option key={l} value={l} className="bg-surface">{l}</option>)}</select></div>
@@ -697,6 +745,7 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
 function EditKeyModal({license,onClose,onSaved}:{license:License;onClose:()=>void;onSaved:()=>void}) {
   const [newLabel,setNewLabel]=useState(license.label||"");
   const [newGemini,setNewGemini]=useState(license.gemini_key||"");
+  const [newModel,setNewModel]=useState(license.model||"gemini");
   const [addDays,setAddDays]=useState(0);
   const [addHours,setAddHours]=useState(0);
   const [saving,setSaving]=useState(false); const [error,setError]=useState("");
@@ -705,13 +754,13 @@ function EditKeyModal({license,onClose,onSaved}:{license:License;onClose:()=>voi
   
   async function handleSave(){
     setSaving(true);setError("");
-    try{await updateLicense(license.id,newLabel,newGemini,addDays,addHours);onSaved();}
+    try{await updateLicense(license.id,newLabel,newGemini,addDays,addHours,newModel);onSaved();}
     catch(e){setError(e instanceof Error?e.message:"Failed");}
     setSaving(false);
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md" onClick={onClose}>
-      <div className="bg-surface-container-low border border-outline/30 rounded-2xl p-7 w-full max-w-md shadow-2xl page-enter" onClick={e=>e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-md" onClick={onClose}>
+      <div className="bg-surface-container-low border border-outline/30 rounded-t-2xl sm:rounded-2xl p-5 sm:p-7 w-full sm:max-w-md shadow-2xl page-enter max-h-[92vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
         <h2 className="text-lg font-bold mb-1 text-on-surface">Edit License</h2>
         <p className="text-on-surface-variant text-sm mb-5">
           <code className="text-primary font-mono bg-primary/10 px-2 py-0.5 rounded border border-primary/20">{license.reg_key}</code>
@@ -723,9 +772,17 @@ function EditKeyModal({license,onClose,onSaved}:{license:License;onClose:()=>voi
             <input type="text" value={newLabel} onChange={e=>setNewLabel(e.target.value)} placeholder="e.g. John Doe" className={inp}/>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Gemini API Key</label>
-            <input type="text" value={newGemini} onChange={e=>setNewGemini(e.target.value)} placeholder="AIza..." 
+            <label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Provider API Key</label>
+            <input type="text" value={newGemini} onChange={e=>setNewGemini(e.target.value)} placeholder="AIza... or nvapi-..." 
               className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono"/>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Model</label>
+            <select value={newModel} onChange={e=>setNewModel(e.target.value)} className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface text-sm focus:outline-none focus:border-primary/40 cursor-pointer">
+              <option value="gemini" className="bg-surface">Gemini (gemini-2.5-flash)</option>
+              <option value="meta/llama-3.3-70b-instruct" className="bg-surface">Llama 3.3 70B — Fast ~2s (NIM)</option>
+              <option value="meta/llama-3.1-8b-instruct" className="bg-surface">Llama 3.1 8B — Fastest (NIM)</option>
+            </select>
           </div>
           <div>
             <label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Add Duration (Extend Trial)</label>

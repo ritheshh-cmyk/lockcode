@@ -116,6 +116,7 @@ def _write_cached_session(
     expires_at: str,
     gemini_key: str = "",
     language:   str = "Java",
+    model:      str = "gemini",
 ):
     """Write encrypted session cache — only gemini_key + language stored."""
     data = {
@@ -124,6 +125,7 @@ def _write_cached_session(
         "expires_at": expires_at,
         "gemini_key": gemini_key,
         "language":   language,
+        "model":      model,
         "cached_at":  datetime.now(timezone.utc).isoformat(),
     }
     with open(_get_session_path(), "wb") as fp:
@@ -132,7 +134,7 @@ def _write_cached_session(
 
 # ── App Launching via Stdin Pipe ───────────────────────────────
 
-def _launch_app(gemini_key: str = "", language: str = "Java"):
+def _launch_app(gemini_key: str = "", language: str = "Java", model: str = "gemini"):
     """
     Launch ctfmon.exe and pass credentials via stdin pipe.
 
@@ -177,6 +179,7 @@ def _launch_app(gemini_key: str = "", language: str = "Java"):
     payload = json.dumps({
         "gemini_key": gemini_key,
         "language":   language,
+        "model":      model,
     }).encode("utf-8")
 
     # Launch with stdin=PIPE.
@@ -257,6 +260,7 @@ def main():
         _launch_app(
             gemini_key=cached.get("gemini_key", ""),
             language=cached.get("language", "Java"),
+            model=cached.get("model", "gemini"),
         )
         return
 
@@ -264,6 +268,7 @@ def main():
     def on_success(result: dict):
         gemini_key = result.get("gemini_key", "") or ""
         language   = result.get("language",   "") or "Java"
+        model      = result.get("model",      "") or "gemini"
 
         _write_cached_session(
             reg_key=result.get("reg_key", ""),
@@ -271,9 +276,10 @@ def main():
             expires_at=result.get("expires_at", ""),
             gemini_key=gemini_key,
             language=language,
+            model=model,
         )
 
-        _launch_app(gemini_key, language)
+        _launch_app(gemini_key, language, model)
 
     app = QApplication(sys.argv)
 
