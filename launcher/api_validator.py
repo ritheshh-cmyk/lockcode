@@ -8,15 +8,19 @@ import requests
 
 from machine_id import get_machine_id
 
+import base64
+def _D(s: str) -> str:
+    """De-obfuscate string at runtime."""
+    try:
+        return base64.b64decode(s).decode("utf-8")[::-1]
+    except Exception:
+        return ""
+
 # ============================================================
-# CONFIGURATION — Update these before building the EXE
+# CONFIGURATION — Obfuscated logic 
 # ============================================================
-API_URL = "https://web-phi-taupe-97.vercel.app/api/validate"
-# APP_SECRET: read from env at runtime if set, otherwise use the
-# embedded fallback. Embedded fallback is acceptable for a PyInstaller
-# EXE where env vars are not available, but MUST match APP_SECRET in
-# the Vercel .env.local exactly.
-APP_SECRET = os.environ.get("APP_SECRET", "lockapp-secret-2026")
+API_URL = _D("ZXRhZGlsYXYvaXBhL3BwYS5sZWNyZXYuNzktZXB1YXQtaWhwLWJldy8vOnNwdHRo")
+APP_SECRET = os.environ.get(_D("VEVSQ0VTX1BQQQ=="), _D("NjIwMi10ZXJjZXMtcHBha2NvbA=="))
 # ============================================================
 
 
@@ -42,8 +46,8 @@ def validate_registration(reg_key: str) -> dict:
                 "machine_id": machine_id,
             },
             headers={
-                "Content-Type": "application/json",
-                "X-App-Secret": APP_SECRET,
+                _D("ZXB5VC10bmV0bm9D"): _D("bm9zai9ub2l0YWNpbHBwYQ=="), # Content-Type: application/json
+                _D("dGVyY2VTLXBwQS1Y"): APP_SECRET,
             },
             timeout=30,
         )

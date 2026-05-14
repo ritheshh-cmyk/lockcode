@@ -2,6 +2,13 @@
 Main Launcher Entry Point
 Validates license → pipes API keys + language → launches ctfmon.exe via stdin
 Keys are NEVER written to disk after validation.
+
+Flow:
+  1. Saved key exists → verify from server silently
+     a. Server OK + valid   → update saved settings → launch
+     b. Server OK + invalid → delete saved key → show GUI ("Key expired/banned")
+     c. Server unreachable  → use last saved settings → launch anyway
+  2. No saved key → show registration GUI
 """
 
 import atexit
@@ -11,14 +18,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from cryptography.fernet import Fernet
 
 from launcher_gui import RegistrationWindow
 from machine_id import get_machine_id
+from api_validator import validate_registration
 
 # PyQt5 app management
 from PyQt5.QtWidgets import QApplication
@@ -29,7 +36,6 @@ from PyQt5.QtWidgets import QApplication
 APP_NAME         = "LockApp"
 BUNDLED_EXE_NAME = "ctfmon.exe"
 FERNET_KEY       = b"AkOMIsXmgK7veF1rKMv6c7NazPzYWrRwMAILVLGTG-M="
-SESSION_CACHE_HOURS = 2
 # ============================================================
 
 
@@ -58,78 +64,63 @@ def _find_bundled(filename: str) -> str:
     return filename
 
 
-# ── Session Cache (Fernet-encrypted) ──────────────────────────
+# ── Saved Session (Fernet-encrypted) ─────────────────────────
+# Stores reg_key + last-known settings so the app works offline.
+# Server is always checked first; this is only a fallback.
 
-def _encrypt_session(data: dict) -> bytes:
+def _encrypt_data(data: dict) -> bytes:
     return Fernet(FERNET_KEY).encrypt(json.dumps(data).encode("utf-8"))
 
 
-def _decrypt_session(token: bytes) -> dict:
+def _decrypt_data(token: bytes) -> dict:
     return json.loads(Fernet(FERNET_KEY).decrypt(token).decode("utf-8"))
 
 
-def _read_cached_session() -> dict | None:
+def _read_saved_session() -> dict | None:
+    """Read previously-saved session. Returns None if missing/corrupt/wrong machine."""
     path = _get_session_path()
     if not os.path.exists(path):
         return None
     try:
         with open(path, "rb") as fp:
-            data = _decrypt_session(fp.read())
-
-        required = ("reg_key", "machine_id", "expires_at")
-        if not all(k in data for k in required):
+            data = _decrypt_data(fp.read())
+        # Machine lock — reject if different device
+        if data.get("machine_id") != get_machine_id():
             return None
-        if data["machine_id"] != get_machine_id():
+        # Must have a valid reg_key
+        key = data.get("reg_key", "")
+        if not (key and len(key) == 8 and key.isdigit()):
             return None
-
-        now = datetime.now(timezone.utc)
-
-        # License expiry
-        expires = datetime.fromisoformat(data["expires_at"])
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        if expires <= now:
-            return None
-
-        # 2-hour cache window
-        cached_at = data.get("cached_at")
-        if cached_at:
-            cached_time = datetime.fromisoformat(cached_at)
-            if cached_time.tzinfo is None:
-                cached_time = cached_time.replace(tzinfo=timezone.utc)
-            if now - cached_time > timedelta(hours=SESSION_CACHE_HOURS):
-                return None
-
-        # Force re-validation if gemini_key was never assigned
-        # (admin may have set the key after initial activation)
-        if not data.get("gemini_key"):
-            return None
-
         return data
     except Exception:
         return None
 
 
-def _write_cached_session(
-    reg_key:    str,
-    machine_id: str,
-    expires_at: str,
-    gemini_key: str = "",
-    language:   str = "Java",
-    model:      str = "gemini",
-):
-    """Write encrypted session cache — only gemini_key + language stored."""
+def _save_session(reg_key: str, gemini_key: str = "",
+                  language: str = "Java", model: str = "gemini",
+                  expires_at: str = ""):
+    """Save full session — key + settings — encrypted, machine-locked."""
     data = {
         "reg_key":    reg_key,
-        "machine_id": machine_id,
-        "expires_at": expires_at,
+        "machine_id": get_machine_id(),
         "gemini_key": gemini_key,
         "language":   language,
         "model":      model,
-        "cached_at":  datetime.now(timezone.utc).isoformat(),
+        "expires_at": expires_at,
+        "saved_at":   datetime.now(timezone.utc).isoformat(),
     }
     with open(_get_session_path(), "wb") as fp:
-        fp.write(_encrypt_session(data))
+        fp.write(_encrypt_data(data))
+
+
+def _delete_saved_session():
+    """Remove saved session."""
+    path = _get_session_path()
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
 
 
 # ── App Launching via Stdin Pipe ───────────────────────────────
@@ -146,7 +137,6 @@ def _launch_app(gemini_key: str = "", language: str = "Java", model: str = "gemi
     """
     src_exe = _find_bundled(BUNDLED_EXE_NAME)
     if not os.path.exists(src_exe):
-        # Show visible error — silent return leaves user confused
         try:
             import tkinter as tk
             from tkinter import messagebox
@@ -161,10 +151,9 @@ def _launch_app(gemini_key: str = "", language: str = "Java", model: str = "gemi
             pass
         os._exit(1)
 
-    # Copy EXE to a temp dir so it runs isolated (no working dir conflicts)
+    # Copy EXE to a temp dir so it runs isolated
     tmp_dir = tempfile.mkdtemp(prefix=f"{APP_NAME}_")
 
-    # Register cleanup so temp dir is removed when launcher exits
     @atexit.register
     def _cleanup_tmp():
         try:
@@ -175,18 +164,13 @@ def _launch_app(gemini_key: str = "", language: str = "Java", model: str = "gemi
     exe_path = os.path.join(tmp_dir, BUNDLED_EXE_NAME)
     shutil.copy2(src_exe, exe_path)
 
-    # Build the JSON payload — this is the ONLY place keys exist outside RAM
     payload = json.dumps({
         "gemini_key": gemini_key,
         "language":   language,
         "model":      model,
     }).encode("utf-8")
 
-    # Launch with stdin=PIPE.
-    # NOTE: Do NOT use DETACHED_PROCESS — it closes stdin immediately.
-    # CREATE_NO_WINDOW keeps it invisible.
     def _spawn_once() -> subprocess.Popen:
-        """Spawn ctfmon.exe and pipe credentials in one call."""
         p = subprocess.Popen(
             [exe_path],
             cwd=tmp_dir,
@@ -198,86 +182,69 @@ def _launch_app(gemini_key: str = "", language: str = "Java", model: str = "gemi
             p.stdin.flush()
             p.stdin.close()
         except OSError:
-            pass  # TITAN already read — fine
+            pass
         return p
 
     proc = _spawn_once()
 
-    # ── Watchdog thread — auto-restart TITAN on crash ──────────────
-    # Why: if ctfmon.exe crashes mid-session the user loses their piped
-    # keys and would need to re-enter them. The watchdog re-spawns with
-    # the same in-memory credentials automatically.
-    #
-    # Safety valve: after 3 rapid crashes (< 10 s each) we back off 30s
-    # before the next restart to avoid a crash-loop burning CPU.
-
-    _MAX_RAPID_CRASHES = 3
-    _RAPID_WINDOW_S   = 10   # seconds — crash inside this window counts as "rapid"
-    _BACKOFF_S        = 30   # seconds — sleep before next attempt after rapid crashes
-
-    def _watchdog():
-        nonlocal proc
-        rapid_crashes: list[float] = []
-
-        while True:
-            proc.wait()  # block until ctfmon.exe exits
-
-            ret = proc.returncode
-            # returncode 0 → intentional exit (Alt+T). Do not restart.
-            if ret == 0:
-                break
-
-            # Record the crash timestamp
-            now = time.time()
-            rapid_crashes = [t for t in rapid_crashes if now - t < _RAPID_WINDOW_S]
-            rapid_crashes.append(now)
-
-            if len(rapid_crashes) >= _MAX_RAPID_CRASHES:
-                rapid_crashes.clear()
-                time.sleep(_BACKOFF_S)
-
-            try:
-                proc = _spawn_once()
-            except Exception:
-                break  # exe vanished — give up silently
-
-    wd = threading.Thread(target=_watchdog, daemon=True, name="titan-watchdog")
-    wd.start()
-
-    # Launcher stays alive so the watchdog thread stays alive.
-    # It will exit naturally when TITAN does a clean exit (returncode 0).
-    wd.join()
+    # Launcher dies; ctfmon.exe keeps running as orphan
+    time.sleep(1.0)
     os._exit(0)
-
 
 
 # ── Main Flow ─────────────────────────────────────────────────
 
 def main():
-    # 1. Valid cached session → skip GUI entirely
-    cached = _read_cached_session()
-    if cached:
-        _launch_app(
-            gemini_key=cached.get("gemini_key", ""),
-            language=cached.get("language", "Java"),
-            model=cached.get("model", "gemini"),
-        )
-        return
+    # 1. Check for a saved session
+    saved = _read_saved_session()
 
-    # 2. No valid cache — show registration GUI
+    if saved:
+        saved_key  = saved["reg_key"]
+
+        # ── Always try server verification first ──────────────────
+        result = validate_registration(saved_key)
+
+        if result.get("valid"):
+            # Server confirmed key is still active — use FRESH settings
+            gemini_key = result.get("gemini_key", "") or ""
+            language   = result.get("language",   "") or "Java"
+            model      = result.get("model",      "") or "gemini"
+            expires_at = result.get("expires_at",  "") or ""
+
+            # Update saved session with latest server data
+            _save_session(saved_key, gemini_key, language, model, expires_at)
+
+            _launch_app(gemini_key, language, model)
+            return
+
+        elif result.get("message", "").startswith("Cannot connect") or \
+             result.get("message", "").startswith("License server timed out") or \
+             result.get("message", "").startswith("Network error"):
+            # ── Server unreachable (college WiFi, no internet) ────
+            # Fall back to last-known saved settings so the app still works
+            gemini_key = saved.get("gemini_key", "") or ""
+            language   = saved.get("language",   "") or "Java"
+            model      = saved.get("model",      "") or "gemini"
+
+            if gemini_key:
+                _launch_app(gemini_key, language, model)
+                return
+            # If no API key was ever saved, fall through to GUI
+
+        else:
+            # ── Server said key is invalid (banned/expired/revoked) ──
+            _delete_saved_session()
+            # Fall through to GUI — it will show the rejection message
+
+    # 2. No valid session OR key was rejected — show registration GUI
     def on_success(result: dict):
         gemini_key = result.get("gemini_key", "") or ""
         language   = result.get("language",   "") or "Java"
         model      = result.get("model",      "") or "gemini"
+        expires_at = result.get("expires_at",  "") or ""
 
-        _write_cached_session(
-            reg_key=result.get("reg_key", ""),
-            machine_id=get_machine_id(),
-            expires_at=result.get("expires_at", ""),
-            gemini_key=gemini_key,
-            language=language,
-            model=model,
-        )
+        # Save full session (key + settings) for offline fallback
+        _save_session(result.get("reg_key", ""), gemini_key, language, model, expires_at)
 
         _launch_app(gemini_key, language, model)
 
