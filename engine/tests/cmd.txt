@@ -1,0 +1,6 @@
+Test-NetConnection web-phi-taupe-97.vercel.app -Port 443
+# Test Google Gemini
+Test-NetConnection generativelanguage.googleapis.com -Port 443
+
+# Test NVIDIA/DeepSeek
+Test-NetConnection integrate.api.nvidia.com -Port 443
