@@ -18,6 +18,7 @@ import {
   removePoolKey,
   clearPoolKeys,
   testAllPoolKeys,
+  testPoolKeys,
   testSinglePoolKey,
   updatePoolKeyLabel,
   type License,
@@ -1023,9 +1024,19 @@ function EditKeyModal({license,onClose,onSaved}:{license:License;onClose:()=>voi
 
 
 // --- API Key Pool Page ---
-// -- Overview language dropdown: reload after save --
-// (Applied inline at line ~248 via separate chunk)
-// -- API Key Pool Page (Supabase-backed) --
+
+function formatRelativeTime(dateString: string | null) {
+  if (!dateString) return "Never";
+  const diffMs = Date.now() - new Date(dateString).getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins} min${diffMins>1?"s":""} ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours} hr${diffHours>1?"s":""} ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} day${diffDays>1?"s":""} ago`;
+}
+
 function APIKeyPoolPage() {
   const [keys, setKeys] = useState<PoolKey[]>([]);
   const [poolLoading, setPoolLoading] = useState(true);
@@ -1038,6 +1049,7 @@ function APIKeyPoolPage() {
   const [testingSingle, setTestingSingle] = useState<Record<string, boolean>>({});
   const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
   const [editLabelValue, setEditLabelValue] = useState("");
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
 
   const loadKeys = useCallback(async () => {
     setPoolLoading(true);
@@ -1050,10 +1062,34 @@ function APIKeyPoolPage() {
 
   async function handleTestAll() {
     if (!keys.length) { showMsg("No keys in pool to test"); return; }
+    
+    const oneHour = 60 * 60 * 1000;
+    const toTestIds = keys.filter(k => !k.last_checked_at || (Date.now() - new Date(k.last_checked_at).getTime() > oneHour)).map(k => k.id);
+    
+    if (toTestIds.length === 0) {
+      showMsg("All keys tested under 1 hour ago. Tick boxes and click 'Test Selected' to force test.");
+      return;
+    }
+
     setTesting(true);
-    showMsg(`Testing ${keys.length} key${keys.length > 1 ? "s" : ""}…`);
+    showMsg(`Testing ${toTestIds.length} key${toTestIds.length > 1 ? "s" : ""}… ${keys.length - toTestIds.length > 0 ? `(Skipped ${keys.length - toTestIds.length} recent)` : ""}`);
     try {
-      const results = await testAllPoolKeys();
+      const results = await testPoolKeys(toTestIds);
+      await loadKeys();
+      const active = results.filter(r => r.status === "active").length;
+      const limited = results.filter(r => r.status === "rate_limited").length;
+      const invalid = results.filter(r => r.status === "invalid" || r.status === "error").length;
+      showMsg(`✅ ${active} active  🟡 ${limited} limited  ❌ ${invalid} invalid`);
+    } catch { showMsg("Test failed — check console"); }
+    setTesting(false);
+  }
+
+  async function handleTestSelected() {
+    if (selectedKeys.size === 0) return;
+    setTesting(true);
+    showMsg(`Force testing ${selectedKeys.size} key${selectedKeys.size > 1 ? "s" : ""}…`);
+    try {
+      const results = await testPoolKeys(Array.from(selectedKeys));
       await loadKeys();
       const active = results.filter(r => r.status === "active").length;
       const limited = results.filter(r => r.status === "rate_limited").length;
@@ -1064,6 +1100,15 @@ function APIKeyPoolPage() {
   }
 
   async function handleTestSingle(id: string) {
+    const keyData = keys.find(k => k.id === id);
+    if (keyData?.last_checked_at) {
+      const diffMs = Date.now() - new Date(keyData.last_checked_at).getTime();
+      if (diffMs < 60 * 60 * 1000) {
+        showMsg("Tested under 1 hour ago. Tick the box and click 'Test Selected' to force test.");
+        return;
+      }
+    }
+
     setTestingSingle(p => ({ ...p, [id]: true }));
     try {
       const res = await testSinglePoolKey(id);
@@ -1076,6 +1121,21 @@ function APIKeyPoolPage() {
       await loadKeys();
     }
     setTestingSingle(p => ({ ...p, [id]: false }));
+  }
+
+  function toggleSelection(id: string) {
+    const next = new Set(selectedKeys);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedKeys(next);
+  }
+
+  function toggleAllSelection() {
+    if (selectedKeys.size === keys.length && keys.length > 0) {
+      setSelectedKeys(new Set());
+    } else {
+      setSelectedKeys(new Set(keys.map(k => k.id)));
+    }
   }
 
   async function handleSaveLabel(id: string) {
@@ -1137,8 +1197,16 @@ function APIKeyPoolPage() {
               className="flex items-center gap-1.5 px-3 py-1.5 bg-tertiary/10 border border-tertiary/30 text-tertiary rounded-lg text-xs font-bold hover:bg-tertiary/20 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
               {testing
                 ? <><div className="w-3.5 h-3.5 border-2 border-tertiary/30 border-t-tertiary rounded-full animate-spin"/>Testing…</>
-                : <><span className="material-symbols-outlined text-[16px]">network_check</span>Test All Keys</>}
+                : <><span className="material-symbols-outlined text-[16px]">network_check</span>Test Unchecked</>}
             </button>
+            {selectedKeys.size > 0 && (
+              <button onClick={handleTestSelected} disabled={testing}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary border border-primary text-on-primary rounded-lg text-xs font-bold hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                {testing
+                  ? <><div className="w-3.5 h-3.5 border-2 border-on-primary/30 border-t-on-primary rounded-full animate-spin"/>Testing…</>
+                  : <><span className="material-symbols-outlined text-[16px]">rule_folder</span>Test Selected ({selectedKeys.size})</>}
+              </button>
+            )}
             {keys.length>0&&(confirmClear
               ?<div className="flex gap-2">
                  <button onClick={async()=>{try{await clearPoolKeys();await loadKeys();setConfirmClear(false);showMsg("Pool cleared");}catch{showMsg("Failed to clear");}}} className="px-3 py-1.5 bg-error text-on-error rounded-lg text-xs font-bold cursor-pointer hover:brightness-110">Confirm</button>
@@ -1176,10 +1244,13 @@ function APIKeyPoolPage() {
 
       <div className="bg-surface-container border border-outline/20 rounded-xl overflow-hidden stagger-3">
         <div className="p-4 md:p-5 border-b border-outline/20 bg-surface-container-low flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-base font-bold text-on-surface">Stored Keys ({keys.length})</h3>
+          <div className="flex items-center gap-3">
+            <input type="checkbox" checked={keys.length > 0 && selectedKeys.size === keys.length} onChange={toggleAllSelection} className="w-4 h-4 rounded bg-surface-container border-outline/50 text-primary focus:ring-primary focus:ring-offset-background cursor-pointer" />
+            <h3 className="text-base font-bold text-on-surface">Stored Keys ({keys.length})</h3>
+          </div>
           <div className="flex items-center gap-3 text-xs text-on-surface-variant">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-success"/>Active</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-warning"/>Rate Limited</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-warning"/>Limited</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-error"/>Invalid</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-outline"/>Unchecked</span>
           </div>
@@ -1210,7 +1281,10 @@ function APIKeyPoolPage() {
                 return (
                   <div key={k.id} className="p-4 space-y-3">
                     <div className="flex justify-between items-start">
-                      <div className="font-mono text-sm text-tertiary break-all">{k.key.slice(0, 24)}…</div>
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" checked={selectedKeys.has(k.id)} onChange={() => toggleSelection(k.id)} className="w-4 h-4 rounded bg-surface-container border-outline/50 text-primary focus:ring-primary focus:ring-offset-background cursor-pointer" />
+                        <div className="font-mono text-sm text-tertiary break-all">{k.key.slice(0, 24)}…</div>
+                      </div>
                       <div className="flex gap-2">
                         <button onClick={() => copyKey(k.key)} className="p-1.5 hover:text-primary transition-colors cursor-pointer"><span className="material-symbols-outlined text-[18px]">content_copy</span></button>
                         <button onClick={() => handleRemoveKey(k.id)} className="p-1.5 text-error transition-colors cursor-pointer"><span className="material-symbols-outlined text-[18px]">delete</span></button>
@@ -1239,8 +1313,8 @@ function APIKeyPoolPage() {
                       )}
                     </div>
                     <div className="flex justify-between items-center pt-2">
-                      <span className="text-xs text-on-surface-variant opacity-60">
-                        {k.last_checked_at ? new Date(k.last_checked_at).toLocaleTimeString() : "Never checked"}
+                      <span className="text-xs text-on-surface-variant opacity-80 font-medium">
+                        Last tested: <span className="opacity-70">{formatRelativeTime(k.last_checked_at)}</span>
                       </span>
                       <button onClick={() => handleTestSingle(k.id)} disabled={testingSingle[k.id]} className="px-3 py-1.5 bg-surface-container-highest border border-outline/20 text-on-surface rounded-lg text-xs font-semibold cursor-pointer hover:bg-surface-variant transition-colors disabled:opacity-50">
                         {testingSingle[k.id] ? "Testing…" : "Test Key"}
@@ -1255,9 +1329,12 @@ function APIKeyPoolPage() {
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left border-collapse min-w-[700px]">
                 <thead className="bg-surface-container-high/50 text-on-surface-variant">
-                  <tr>{["Health", "Assign", "API Key", "Label", "Checked", ""].map((h, i) => (
-                    <th key={i} className={`px-4 py-3 text-[11px] font-semibold uppercase tracking-wider${i === 5 ? " text-right" : ""}`}>{h}</th>
-                  ))}</tr>
+                  <tr>
+                    <th className="px-4 py-3 w-[40px]"><input type="checkbox" checked={keys.length > 0 && selectedKeys.size === keys.length} onChange={toggleAllSelection} className="w-4 h-4 rounded bg-surface-container border-outline/50 text-primary focus:ring-primary focus:ring-offset-background cursor-pointer" /></th>
+                    {["Health", "Assign", "API Key", "Label", "Checked", ""].map((h, i) => (
+                      <th key={i} className={`px-4 py-3 text-[11px] font-semibold uppercase tracking-wider${i === 5 ? " text-right" : ""}`}>{h}</th>
+                    ))}
+                  </tr>
                 </thead>
                 <tbody className="divide-y divide-outline/10">
                   {keys.map((k) => {
@@ -1271,6 +1348,7 @@ function APIKeyPoolPage() {
                       : { dot: "bg-outline", cls: "text-on-surface-variant bg-surface-variant border-outline/30", label: "Unchecked" };
                     return (
                       <tr key={k.id} className="hover:bg-surface-container-high/30 transition-colors group">
+                        <td className="px-4 py-3"><input type="checkbox" checked={selectedKeys.has(k.id)} onChange={() => toggleSelection(k.id)} className="w-4 h-4 rounded bg-surface-container border-outline/50 text-primary focus:ring-primary focus:ring-offset-background cursor-pointer" /></td>
                         <td className="px-4 py-3">
                           <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold border flex items-center gap-1 w-fit ${hCfg.cls}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${hCfg.dot} ${health === "active" ? "animate-pulse" : ""}`} />
@@ -1294,8 +1372,8 @@ function APIKeyPoolPage() {
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-xs text-on-surface-variant opacity-60">
-                          {k.last_checked_at ? new Date(k.last_checked_at).toLocaleTimeString() : <span className="italic">Never</span>}
+                        <td className="px-4 py-3 text-xs text-on-surface-variant">
+                          <span className="opacity-80 font-medium">Last tested: </span><span className="opacity-60">{formatRelativeTime(k.last_checked_at)}</span>
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex justify-end items-center gap-1 opacity-100 md:opacity-40 group-hover:opacity-100 transition-opacity">

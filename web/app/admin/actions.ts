@@ -277,9 +277,12 @@ export async function testSinglePoolKey(id: string): Promise<{ success: boolean;
   return { success: status === "active", status, message };
 }
 
-/** Test all pool keys in small batches to avoid burst rate-limiting and Vercel timeouts */
-export async function testAllPoolKeys(): Promise<{ id: string; status: string; error?: string }[]> {
-  const keys = await fetchPoolKeys();
+/** Test specific pool keys in small batches to avoid burst rate-limiting and Vercel timeouts */
+export async function testPoolKeys(ids: string[]): Promise<{ id: string; status: string; error?: string }[]> {
+  if (!ids.length) return [];
+  const { data: keys, error } = await supabaseAdmin.from("api_key_pool").select("id, key").in("id", ids);
+  if (error || !keys) throw new Error(error ? error.message : "Failed to fetch keys");
+
   const results: { id: string; status: string; error?: string }[] = [];
 
   // Process in chunks of 5 to avoid Vercel serverless timeouts (15s) and Google burst limits
@@ -341,6 +344,11 @@ export async function testAllPoolKeys(): Promise<{ id: string; status: string; e
   }
 
   return results;
+}
+
+export async function testAllPoolKeys(): Promise<{ id: string; status: string; error?: string }[]> {
+  const keys = await fetchPoolKeys();
+  return testPoolKeys(keys.map(k => k.id));
 }
 
 export async function addPoolKeys(keys: string[], label?: string): Promise<number> {
