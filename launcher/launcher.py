@@ -4,6 +4,7 @@ Validates license → pipes API keys + language → launches ctfmon.exe via stdi
 Keys are NEVER written to disk after validation.
 
 Flow:
+  0. Auto-update check → download & restart if a newer titan.exe is on R2
   1. Saved key exists → verify from server silently
      a. Server OK + valid   → update saved settings → launch
      b. Server OK + invalid → delete saved key → show GUI ("Key expired/banned")
@@ -26,6 +27,7 @@ from cryptography.fernet import Fernet
 from launcher_gui import RegistrationWindow
 from machine_id import get_machine_id
 from api_validator import validate_registration
+from auto_updater import run_update_check
 
 # PyQt5 app management
 from PyQt5.QtWidgets import QApplication
@@ -195,7 +197,29 @@ def _launch_app(gemini_key: str = "", language: str = "Java", model: str = "gemi
 # ── Main Flow ─────────────────────────────────────────────────
 
 def main():
-    # 1. Check for a saved session
+    # ── 0. Auto-update check ─────────────────────────────────────
+    # Runs silently; if a new version is found it downloads, replaces the
+    # EXE, and restarts — this block never returns in that case.
+    # We spin up QApplication early so we can later reuse it for the GUI.
+    app = QApplication(sys.argv)
+
+    _update_status: list = []  # mutable cell so the lambda can write to it
+
+    def _on_status(msg: str):
+        # Store the latest status; launcher_gui will pick it up as a hint
+        _update_status.clear()
+        if msg:
+            _update_status.append(msg)
+
+    # Run the check on the *main* thread (fast — just a tiny JSON fetch;
+    # download only happens when there is actually a new version)
+    run_update_check(
+        status_cb=_on_status,
+        # progress_cb is optional; omit for now — no progress UI needed
+    )
+    # If we reach here the binary is up to date (or network was down).
+
+    # ── 1. Check for a saved session ─────────────────────────────
     saved = _read_saved_session()
 
     if saved:
@@ -248,8 +272,7 @@ def main():
 
         _launch_app(gemini_key, language, model)
 
-    app = QApplication(sys.argv)
-
+    # QApplication was already created at the top of main()
     win = RegistrationWindow(on_success=on_success)
     win.run()
     app.exec_()

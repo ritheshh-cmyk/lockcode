@@ -5,37 +5,28 @@ import { supabaseAdmin } from "@/lib/supabase";
 // ── Auth ────────────────────────────────────────────────────
 
 export async function verifyAdminPassword(password: string): Promise<boolean> {
-  // Hash the candidate password with SHA-256 before comparing.
   const encoder = new TextEncoder();
   const data = encoder.encode(password);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const candidateHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 
-  // 1️⃣ Primary: verify against Supabase admin_config table (hash comparison)
+  // 1️⃣ Primary: Supabase admin_config table
   try {
     const { data: row, error } = await supabaseAdmin
       .from("admin_config")
       .select("value")
       .eq("key", "admin_password_hash")
       .single();
+    if (!error && row) return candidateHash === row.value;
+  } catch { /* table may not exist yet */ }
 
-    if (!error && row) {
-      return candidateHash === row.value;
-    }
-  } catch {
-    // table may not exist yet — fall through
-  }
+  // 2️⃣ Fallback: env var hash
+  if (process.env.ADMIN_PASSWORD_HASH) return candidateHash === process.env.ADMIN_PASSWORD_HASH;
 
-  // 2️⃣ Fallback: ADMIN_PASSWORD_HASH env var (hash comparison)
-  if (process.env.ADMIN_PASSWORD_HASH) {
-    return candidateHash === process.env.ADMIN_PASSWORD_HASH;
-  }
-
-  // 3️⃣ Last resort: ADMIN_PASSWORD plain text env var
+  // 3️⃣ Last resort: plain text env var
   return password === process.env.ADMIN_PASSWORD;
 }
-
 
 
 // ── Types ───────────────────────────────────────────────────
@@ -54,23 +45,32 @@ export interface License {
   model: string | null;
 }
 
+export interface PoolKey {
+  id: string;
+  key: string;
+  label: string | null;
+  used: boolean;
+  added_at: string;
+  status: "active" | "rate_limited" | "invalid" | "error" | null;
+  last_checked_at: string | null;
+  error_message: string | null;
+}
+
 // ── Guards ──────────────────────────────────────────────────
 
-/** Throw early if id is empty — prevents accidental full-table mutations. */
 function requireId(id: string, op: string): void {
   if (!id || typeof id !== "string" || id.trim().length === 0) {
     throw new Error(`${op}: id must not be empty`);
   }
 }
 
-// ── CRUD Operations ─────────────────────────────────────────
+// ── License CRUD ─────────────────────────────────────────────
 
 export async function fetchAllLicenses(): Promise<License[]> {
   const { data, error } = await supabaseAdmin
     .from("licenses")
     .select("id, reg_key, label, gemini_key, language, model, expires_at, is_active, machine_id, activated_at, created_at")
     .order("created_at", { ascending: false });
-
   if (error) throw new Error(error.message);
   return (data as License[]) || [];
 }
@@ -85,32 +85,18 @@ export async function createLicense(
   model: string = "gemini"
 ): Promise<License> {
   const reg_key = regKey.trim();
-  if (!/^\d{8}$/.test(reg_key)) {
-    throw new Error("Key must be exactly 8 digits");
-  }
-  const totalMs =
-    trialDays * 24 * 60 * 60 * 1000 +
-    trialHours * 60 * 60 * 1000;
-  if (totalMs <= 0) {
-    throw new Error("Duration must be greater than 0");
-  }
+  if (!/^\d{8}$/.test(reg_key)) throw new Error("Key must be exactly 8 digits");
+  const totalMs = trialDays * 24 * 60 * 60 * 1000 + trialHours * 60 * 60 * 1000;
+  if (totalMs <= 0) throw new Error("Duration must be greater than 0");
   const expires_at = new Date(Date.now() + totalMs).toISOString();
 
   const { data, error } = await supabaseAdmin
     .from("licenses")
-    .insert({
-      reg_key,
-      label: label.trim() || null,
-      expires_at,
-      gemini_key: geminiKey.trim() || null,
-      language: language || "Java",
-      model: model,
-    })
+    .insert({ reg_key, label: label.trim() || null, expires_at, gemini_key: geminiKey.trim() || null, language: language || "Java", model })
     .select("id, reg_key, label, gemini_key, language, model, expires_at, is_active, machine_id, activated_at, created_at")
     .single();
 
   if (error) {
-    // Supabase unique violation code
     if (error.code === "23505") throw new Error("Registration key already exists");
     throw new Error(error.message);
   }
@@ -119,28 +105,29 @@ export async function createLicense(
 
 export async function revokeLicense(id: string): Promise<void> {
   requireId(id, "revokeLicense");
+  const { error } = await supabaseAdmin.from("licenses").update({ is_active: false }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+/** Hard-terminate: set expires_at to now so the client is blocked on next check */
+export async function terminateLicense(id: string): Promise<void> {
+  requireId(id, "terminateLicense");
   const { error } = await supabaseAdmin
     .from("licenses")
-    .update({ is_active: false })
+    .update({ expires_at: new Date().toISOString(), is_active: false })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }
 
 export async function resetLicense(id: string): Promise<void> {
   requireId(id, "resetLicense");
-  const { error } = await supabaseAdmin
-    .from("licenses")
-    .update({ machine_id: null, activated_at: null })
-    .eq("id", id);
+  const { error } = await supabaseAdmin.from("licenses").update({ machine_id: null, activated_at: null }).eq("id", id);
   if (error) throw new Error(error.message);
 }
 
 export async function deleteLicense(id: string): Promise<void> {
   requireId(id, "deleteLicense");
-  const { error } = await supabaseAdmin
-    .from("licenses")
-    .delete()
-    .eq("id", id);
+  const { error } = await supabaseAdmin.from("licenses").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
 
@@ -148,48 +135,237 @@ export async function updateLicense(
   id: string,
   label: string,
   geminiKey: string,
+  language: string,
   addDays: number = 0,
   addHours: number = 0,
+  deductDays: number = 0,
+  deductHours: number = 0,
   model: string = "gemini"
 ): Promise<void> {
   requireId(id, "updateLicense");
 
-  // Fetch current expiry to extend it
   const { data: current, error: fetchErr } = await supabaseAdmin
-    .from("licenses")
-    .select("expires_at")
-    .eq("id", id)
-    .single();
-
+    .from("licenses").select("expires_at").eq("id", id).single();
   if (fetchErr || !current) throw new Error("Failed to fetch license");
 
   let newExpiresAt = current.expires_at;
-  if (addDays > 0 || addHours > 0) {
-    const totalMs = addDays * 24 * 60 * 60 * 1000 + addHours * 60 * 60 * 1000;
-    // Add to current expiry if it's in the future, otherwise add to current time
-    const baseTime = new Date(current.expires_at).getTime() > Date.now()
-      ? new Date(current.expires_at).getTime()
-      : Date.now();
-    newExpiresAt = new Date(baseTime + totalMs).toISOString();
+  const addMs    = (addDays * 24 * 60 * 60 + addHours * 60 * 60) * 1000;
+  const deductMs = (deductDays * 24 * 60 * 60 + deductHours * 60 * 60) * 1000;
+
+  if (addMs > 0) {
+    const base = new Date(current.expires_at).getTime() > Date.now()
+      ? new Date(current.expires_at).getTime() : Date.now();
+    newExpiresAt = new Date(base + addMs).toISOString();
+  } else if (deductMs > 0) {
+    const current_ts = new Date(current.expires_at).getTime();
+    // Clamp: never go below now (would still leave the key technically expired but not negative)
+    const newTs = Math.max(Date.now(), current_ts - deductMs);
+    newExpiresAt = new Date(newTs).toISOString();
   }
 
   const { error } = await supabaseAdmin
     .from("licenses")
-    .update({
-      label: label.trim() || null,
-      gemini_key: geminiKey.trim() || null,
-      expires_at: newExpiresAt,
-      model: model
-    })
+    .update({ label: label.trim() || null, gemini_key: geminiKey.trim() || null, language: language || "Java", expires_at: newExpiresAt, model })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }
 
+/** Standalone language update — used by the inline dropdown in the table */
 export async function updateLanguage(id: string, language: string): Promise<void> {
   requireId(id, "updateLanguage");
   const { error } = await supabaseAdmin
-    .from("licenses")
-    .update({ language: language || "Java" })
+    .from("licenses").update({ language: language || "Java" }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+
+// ── API Key Pool (Supabase-backed) ───────────────────────────
+
+export async function fetchPoolKeys(): Promise<PoolKey[]> {
+  const { data, error } = await supabaseAdmin
+    .from("api_key_pool")
+    .select("id, key, label, used, added_at, status, last_checked_at, error_message")
+    .order("added_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data as PoolKey[]) || [];
+}
+
+export async function updatePoolKeyStatus(
+  id: string,
+  status: string,
+  error_message?: string | null
+): Promise<void> {
+  requireId(id, "updatePoolKeyStatus");
+  const { error } = await supabaseAdmin
+    .from("api_key_pool")
+    .update({ status, error_message, last_checked_at: new Date().toISOString() })
     .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function updatePoolKeyLabel(id: string, label: string): Promise<void> {
+  requireId(id, "updatePoolKeyLabel");
+  const { error } = await supabaseAdmin
+    .from("api_key_pool")
+    .update({ label: label.trim() || null })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function testSinglePoolKey(id: string): Promise<{ success: boolean; status: string; message: string }> {
+  requireId(id, "testSinglePoolKey");
+  const { data, error } = await supabaseAdmin
+    .from("api_key_pool")
+    .select("key")
+    .eq("id", id)
+    .single();
+
+  if (error || !data) throw new Error(error ? error.message : "Key not found");
+
+  const apiKey = data.key;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+  let status = "error";
+  let message = "Unknown error";
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "Hi" }] }]
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      status = "active";
+      message = "";
+    } else {
+      if (res.status === 429) {
+        status = "rate_limited";
+        message = "Quota exceeded (429)";
+      } else if (res.status === 400) {
+        status = "invalid";
+        message = "Invalid key format (400)";
+      } else if (res.status === 403) {
+        status = "invalid";
+        message = "Forbidden or disabled (403)";
+      } else if (res.status === 404) {
+        status = "invalid";
+        message = "Not found (404)";
+      } else {
+        status = "error";
+        message = `HTTP ${res.status}`;
+      }
+    }
+  } catch (err: any) {
+    status = "error";
+    message = err.name === "AbortError" ? "Timeout" : (err.message || String(err));
+  }
+
+  await updatePoolKeyStatus(id, status, message);
+
+  return { success: status === "active", status, message };
+}
+
+/** Test all pool keys in small batches to avoid burst rate-limiting and Vercel timeouts */
+export async function testAllPoolKeys(): Promise<{ id: string; status: string; error?: string }[]> {
+  const keys = await fetchPoolKeys();
+  const results: { id: string; status: string; error?: string }[] = [];
+
+  // Process in chunks of 5 to avoid Vercel serverless timeouts (15s) and Google burst limits
+  const chunkSize = 5;
+  for (let i = 0; i < keys.length; i += chunkSize) {
+    const chunk = keys.slice(i, i + chunkSize);
+    
+    await Promise.all(chunk.map(async (k) => {
+      let status = "active";
+      let errMsg: string | null = null;
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${k.key}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: "1" }] }],
+              generationConfig: { maxOutputTokens: 1 },
+            }),
+            signal: AbortSignal.timeout(6000),
+          }
+        );
+        
+        const bodyText = await res.text();
+        
+        if (res.status === 429) { 
+          status = "rate_limited"; 
+          errMsg = "Quota exceeded (429)"; 
+        }
+        else if (res.status === 400 || res.status === 403 || res.status === 404) { 
+          status = "invalid"; 
+          try {
+            const parsed = JSON.parse(bodyText);
+            errMsg = parsed.error?.message || `HTTP ${res.status}`;
+          } catch {
+            errMsg = `HTTP ${res.status}`;
+          }
+        }
+        else if (!res.ok) { 
+          status = "error"; 
+          errMsg = `HTTP ${res.status}`; 
+        }
+      } catch (e) {
+        status = "error";
+        errMsg = e instanceof Error ? e.message : "Request failed";
+      }
+      // persist to DB
+      await supabaseAdmin.from("api_key_pool").update({
+        status,
+        last_checked_at: new Date().toISOString(),
+        error_message: errMsg,
+      }).eq("id", k.id);
+      
+      results.push({ id: k.id, status, error: errMsg ?? undefined });
+    }));
+    
+    // Add a 300ms delay between chunks
+    if (i + chunkSize < keys.length) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+  }
+
+  return results;
+}
+
+export async function addPoolKeys(keys: string[], label?: string): Promise<number> {
+  if (!keys.length) return 0;
+  const rows = keys.map((k) => ({ key: k, label: label || null, used: false }));
+  // upsert — ignore duplicates
+  const { data, error } = await supabaseAdmin
+    .from("api_key_pool")
+    .upsert(rows, { onConflict: "key", ignoreDuplicates: true })
+    .select("id");
+  if (error) throw new Error(error.message);
+  return data?.length ?? 0;
+}
+
+export async function setPoolKeyUsed(id: string, used: boolean): Promise<void> {
+  requireId(id, "setPoolKeyUsed");
+  const { error } = await supabaseAdmin.from("api_key_pool").update({ used }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function removePoolKey(id: string): Promise<void> {
+  requireId(id, "removePoolKey");
+  const { error } = await supabaseAdmin.from("api_key_pool").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function clearPoolKeys(): Promise<void> {
+  const { error } = await supabaseAdmin.from("api_key_pool").delete().neq("id", "00000000-0000-0000-0000-000000000000");
   if (error) throw new Error(error.message);
 }
