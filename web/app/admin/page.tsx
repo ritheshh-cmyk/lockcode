@@ -227,7 +227,7 @@ function OverviewPage({licenses,loading,loadLicenses,onEdit,onRevoke,onTerminate
     return true;
   });
   const totalFiltered=filtered.length;
-  const safePageSize=pageSize==="all"?totalFiltered:pageSize as number;
+  const safePageSize=pageSize==="all"?Math.max(1,totalFiltered):pageSize as number;
   const totalPages=Math.max(1,Math.ceil(totalFiltered/safePageSize));
   const paginated=pageSize==="all"?filtered:filtered.slice((currentPage-1)*safePageSize,currentPage*safePageSize);
 
@@ -852,25 +852,19 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
   const [model,setModel]=useState("gemini");
   const [trialDays,setTrialDays]=useState(0); const [trialHours,setTrialHours]=useState(0);
   const [creating,setCreating]=useState(false); const [createdKey,setCreatedKey]=useState(""); const [error,setError]=useState("");
-  const [poolKeys,setPoolKeys]=useState<PoolKey[]>([]);
-  const [showPool,setShowPool]=useState(false);
-  // Auto-assigned pool keys state
   const [autoAssigned,setAutoAssigned]=useState<PoolKey[]>([]);
   const [loadingPool,setLoadingPool]=useState(true);
 
   useEffect(()=>{
     // On mount: fetch up to 3 free keys and pre-fill the geminiKey field
     setLoadingPool(true);
-    Promise.all([
-      fetchFreePoolKeys(3),
-      fetchPoolKeys()
-    ]).then(([freeKeys, allKeys])=>{
-      setPoolKeys(allKeys);
-      if (freeKeys.length > 0) {
-        setAutoAssigned(freeKeys);
-        setGeminiKey(freeKeys.map(k => k.key).join(","));
-      }
-    }).catch(()=>{}).finally(()=>setLoadingPool(false));
+    fetchFreePoolKeys(3)
+      .then((freeKeys)=>{
+        if (freeKeys.length > 0) {
+          setAutoAssigned(freeKeys);
+          setGeminiKey(freeKeys.map(k => k.key).join(","));
+        }
+      }).catch(()=>{}).finally(()=>setLoadingPool(false));
   },[]);
 
   const inp="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface placeholder-on-surface-variant/40 focus:outline-none focus:border-primary/50 transition-colors text-sm";
@@ -880,8 +874,9 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
     setCreating(true);setError("");
     try{
       const r=await createLicense(regKey,label,trialDays,trialHours,geminiKey,language,model);
-      // Mark the auto-assigned pool keys as used
-      const assignedIds = autoAssigned.filter(k => geminiKey.includes(k.key)).map(k => k.id);
+      // Mark the auto-assigned pool keys as used — use exact key match, not substring
+      const currentKeys = new Set(geminiKey.split(",").map(k => k.trim()).filter(Boolean));
+      const assignedIds = autoAssigned.filter(k => currentKeys.has(k.key)).map(k => k.id);
       if (assignedIds.length > 0) { await markPoolKeysUsed(assignedIds); }
       setCreatedKey(r.reg_key);
     }
@@ -1012,21 +1007,41 @@ function EditKeyModal({license,onClose,onSaved}:{license:License;onClose:()=>voi
           <div>
             <label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Provider API Key</label>
             <div className="flex gap-2">
-              <input type="text" value={newGemini} onChange={e=>setNewGemini(e.target.value)} placeholder="AIza... or nvapi-..."
-                className="flex-1 px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono"/>
+              {/* Multi-key textarea for edit — supports comma-separated */}
+              <textarea value={newGemini} onChange={e=>setNewGemini(e.target.value)} placeholder="AIza...,AIza...,AIza... (comma-separated)"
+                rows={2}
+                className="flex-1 px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono resize-none"/>
               <button type="button" onClick={()=>setShowEditPool(p=>!p)} title="Assign from Pool"
-                className={`px-3 py-2 border rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 ${showEditPool?"bg-primary/10 text-primary border-primary/40":"bg-surface-container border-outline/50 text-on-surface-variant hover:text-primary hover:border-primary/50"}`}>
+                className={`px-3 py-2 border rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 self-start ${showEditPool?"bg-primary/10 text-primary border-primary/40":"bg-surface-container border-outline/50 text-on-surface-variant hover:text-primary hover:border-primary/50"}`}>
                 <span className="material-symbols-outlined text-[17px]">dataset</span>
               </button>
             </div>
+            <p className="text-[11px] text-on-surface-variant/50 mt-1">
+              {newGemini.split(",").filter(k=>k.trim()).length} key{newGemini.split(",").filter(k=>k.trim()).length!==1?"s":""} assigned.
+            </p>
             {showEditPool&&(
-              <div className="mt-2 bg-surface-container-low border border-outline/30 rounded-xl overflow-hidden max-h-36 overflow-y-auto">
+              <div className="mt-2 bg-surface-container-low border border-outline/30 rounded-xl overflow-hidden max-h-40 overflow-y-auto">
                 {editPoolKeys.filter(k=>!k.used).length===0
                   ?<p className="text-xs text-on-surface-variant p-3 text-center italic">No available keys in pool.</p>
                   :editPoolKeys.filter(k=>!k.used).map(k=>(
-                    <button key={k.id} type="button" onClick={()=>{setNewGemini(k.key);setShowEditPool(false);}}
+                    <button key={k.id} type="button" onClick={()=>{
+                      // Append key to existing multi-key string (up to 3 total)
+                      const existing = newGemini.split(",").map(s=>s.trim()).filter(Boolean);
+                      if (!existing.includes(k.key) && existing.length < 3) {
+                        setNewGemini([...existing, k.key].join(","));
+                      } else if (existing.includes(k.key)) {
+                        // Already included — do nothing
+                      } else {
+                        // Already at 3 — replace last
+                        existing[existing.length-1] = k.key;
+                        setNewGemini(existing.join(","));
+                      }
+                      setShowEditPool(false);
+                    }}
                       className="w-full flex items-center gap-3 px-3 py-2 hover:bg-primary/10 transition-colors cursor-pointer text-left">
-                      <span className="w-1.5 h-1.5 rounded-full bg-success flex-shrink-0"/>
+                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        k.status==="active"?"bg-success":k.status==="rate_limited"?"bg-warning":"bg-outline"
+                      }`}/>
                       <span className="font-mono text-xs text-tertiary flex-1 truncate">{k.key.slice(0,24)}&hellip;</span>
                       {k.label&&<span className="text-[10px] text-on-surface-variant">{k.label}</span>}
                     </button>
@@ -1128,6 +1143,7 @@ function APIKeyPoolPage() {
     try {
       const results = await testPoolKeys(toTestIds);
       await loadKeys();
+      setSelectedKeys(new Set()); // clear selection after test
       const active = results.filter(r => r.status === "active").length;
       const limited = results.filter(r => r.status === "rate_limited").length;
       const invalid = results.filter(r => r.status === "invalid" || r.status === "error").length;
@@ -1143,6 +1159,7 @@ function APIKeyPoolPage() {
     try {
       const results = await testPoolKeys(Array.from(selectedKeys));
       await loadKeys();
+      setSelectedKeys(new Set()); // clear selection after test
       const active = results.filter(r => r.status === "active").length;
       const limited = results.filter(r => r.status === "rate_limited").length;
       const invalid = results.filter(r => r.status === "invalid" || r.status === "error").length;

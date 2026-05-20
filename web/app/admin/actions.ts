@@ -92,7 +92,15 @@ export async function createLicense(
 
   const { data, error } = await supabaseAdmin
     .from("licenses")
-    .insert({ reg_key, label: label.trim() || null, expires_at, gemini_key: geminiKey.trim() || null, language: language || "Java", model })
+    .insert({
+      reg_key,
+      label: label.trim() || null,
+      expires_at,
+      // Sanitize each key in a comma-separated list, remove empty slots
+      gemini_key: geminiKey.split(",").map(k => k.trim()).filter(Boolean).join(",") || null,
+      language: language || "Java",
+      model
+    })
     .select("id, reg_key, label, gemini_key, language, model, expires_at, is_active, machine_id, activated_at, created_at")
     .single();
 
@@ -165,7 +173,14 @@ export async function updateLicense(
 
   const { error } = await supabaseAdmin
     .from("licenses")
-    .update({ label: label.trim() || null, gemini_key: geminiKey.trim() || null, language: language || "Java", expires_at: newExpiresAt, model })
+    .update({
+      label: label.trim() || null,
+      // Per-key trim so " AIza1, AIza2 " → "AIza1,AIza2"
+      gemini_key: geminiKey.split(",").map(k => k.trim()).filter(Boolean).join(",") || null,
+      language: language || "Java",
+      expires_at: newExpiresAt,
+      model
+    })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }
@@ -192,22 +207,27 @@ export async function fetchPoolKeys(): Promise<PoolKey[]> {
 
 /**
  * Fetch up to `limit` free (unused) keys from the pool, preferring active ones.
- * Priority: active > unchecked > rate_limited (never invalid/error).
+ * Priority: active > unchecked (null) > rate_limited. Never returns invalid/error.
+ *
+ * NOTE: Supabase .not("status", "eq", "invalid") filters OUT rows where status IS NULL
+ * in some PostgREST versions, so we filter in JS instead.
  */
 export async function fetchFreePoolKeys(limit: number = 3): Promise<PoolKey[]> {
+  // Fetch all unused keys — we'll filter invalid/error in JS to preserve null-status rows
   const { data, error } = await supabaseAdmin
     .from("api_key_pool")
     .select("id, key, label, used, added_at, status, last_checked_at, error_message")
     .eq("used", false)
-    .not("status", "eq", "invalid")
-    .not("status", "eq", "error")
-    .order("added_at", { ascending: true }); // oldest first so we drain FIFO
+    .order("added_at", { ascending: true }); // FIFO drain
 
   if (error) throw new Error(error.message);
   const rows = (data as PoolKey[]) || [];
 
+  // Filter out definitively bad keys; keep active, null (unchecked), rate_limited
+  const eligible = rows.filter(k => k.status !== "invalid" && k.status !== "error");
+
   // Sort: active first, then null (unchecked), then rate_limited
-  const ranked = rows.sort((a, b) => {
+  const ranked = eligible.sort((a, b) => {
     const rank = (s: string | null) => s === "active" ? 0 : s === null ? 1 : 2;
     return rank(a.status) - rank(b.status);
   });
@@ -310,7 +330,8 @@ export async function testSinglePoolKey(id: string): Promise<{ success: boolean;
     message = err.name === "AbortError" ? "Timeout" : (err.message || String(err));
   }
 
-  await updatePoolKeyStatus(id, status, message);
+  // Store null (not empty string) for active keys — empty string means "no error" ambiguously
+  await updatePoolKeyStatus(id, status, status === "active" ? null : message || null);
 
   return { success: status === "active", status, message };
 }
@@ -365,11 +386,11 @@ export async function testPoolKeys(ids: string[]): Promise<{ id: string; status:
         status = "error";
         errMsg = e instanceof Error ? e.message : "Request failed";
       }
-      // persist to DB
+      // persist to DB — null for active (no error)
       await supabaseAdmin.from("api_key_pool").update({
         status,
         last_checked_at: new Date().toISOString(),
-        error_message: errMsg,
+        error_message: status === "active" ? null : errMsg,
       }).eq("id", k.id);
       
       results.push({ id: k.id, status, error: errMsg ?? undefined });
