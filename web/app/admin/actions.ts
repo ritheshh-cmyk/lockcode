@@ -223,7 +223,7 @@ export async function testSinglePoolKey(id: string): Promise<{ success: boolean;
   if (error || !data) throw new Error(error ? error.message : "Key not found");
 
   const apiKey = data.key;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`;
 
   let status = "error";
   let message = "Unknown error";
@@ -292,7 +292,7 @@ export async function testAllPoolKeys(): Promise<{ id: string; status: string; e
       let errMsg: string | null = null;
       try {
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${k.key}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${k.key}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
