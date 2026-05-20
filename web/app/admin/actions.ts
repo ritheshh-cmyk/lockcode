@@ -190,6 +190,44 @@ export async function fetchPoolKeys(): Promise<PoolKey[]> {
   return (data as PoolKey[]) || [];
 }
 
+/**
+ * Fetch up to `limit` free (unused) keys from the pool, preferring active ones.
+ * Priority: active > unchecked > rate_limited (never invalid/error).
+ */
+export async function fetchFreePoolKeys(limit: number = 3): Promise<PoolKey[]> {
+  const { data, error } = await supabaseAdmin
+    .from("api_key_pool")
+    .select("id, key, label, used, added_at, status, last_checked_at, error_message")
+    .eq("used", false)
+    .not("status", "eq", "invalid")
+    .not("status", "eq", "error")
+    .order("added_at", { ascending: true }); // oldest first so we drain FIFO
+
+  if (error) throw new Error(error.message);
+  const rows = (data as PoolKey[]) || [];
+
+  // Sort: active first, then null (unchecked), then rate_limited
+  const ranked = rows.sort((a, b) => {
+    const rank = (s: string | null) => s === "active" ? 0 : s === null ? 1 : 2;
+    return rank(a.status) - rank(b.status);
+  });
+
+  return ranked.slice(0, limit);
+}
+
+/**
+ * Mark a set of pool key IDs as used/assigned to a license.
+ */
+export async function markPoolKeysUsed(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const { error } = await supabaseAdmin
+    .from("api_key_pool")
+    .update({ used: true })
+    .in("id", ids);
+  if (error) throw new Error(error.message);
+}
+
+
 export async function updatePoolKeyStatus(
   id: string,
   status: string,

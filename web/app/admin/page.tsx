@@ -13,7 +13,9 @@ import {
   updateLicense,
   updateLanguage,
   fetchPoolKeys,
+  fetchFreePoolKeys,
   addPoolKeys,
+  markPoolKeysUsed,
   setPoolKeyUsed,
   removePoolKey,
   clearPoolKeys,
@@ -852,13 +854,37 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
   const [creating,setCreating]=useState(false); const [createdKey,setCreatedKey]=useState(""); const [error,setError]=useState("");
   const [poolKeys,setPoolKeys]=useState<PoolKey[]>([]);
   const [showPool,setShowPool]=useState(false);
-  useEffect(()=>{fetchPoolKeys().then(setPoolKeys).catch(()=>{});},[]);
+  // Auto-assigned pool keys state
+  const [autoAssigned,setAutoAssigned]=useState<PoolKey[]>([]);
+  const [loadingPool,setLoadingPool]=useState(true);
+
+  useEffect(()=>{
+    // On mount: fetch up to 3 free keys and pre-fill the geminiKey field
+    setLoadingPool(true);
+    Promise.all([
+      fetchFreePoolKeys(3),
+      fetchPoolKeys()
+    ]).then(([freeKeys, allKeys])=>{
+      setPoolKeys(allKeys);
+      if (freeKeys.length > 0) {
+        setAutoAssigned(freeKeys);
+        setGeminiKey(freeKeys.map(k => k.key).join(","));
+      }
+    }).catch(()=>{}).finally(()=>setLoadingPool(false));
+  },[]);
+
   const inp="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface placeholder-on-surface-variant/40 focus:outline-none focus:border-primary/50 transition-colors text-sm";
   async function handleCreate() {
     if (regKey.length!==8){setError("Key must be exactly 8 digits");return;}
     if (trialDays<=0&&trialHours<=0){setError("Set at least 1 day or 1 hour");return;}
     setCreating(true);setError("");
-    try{const r=await createLicense(regKey,label,trialDays,trialHours,geminiKey,language,model);setCreatedKey(r.reg_key);}
+    try{
+      const r=await createLicense(regKey,label,trialDays,trialHours,geminiKey,language,model);
+      // Mark the auto-assigned pool keys as used
+      const assignedIds = autoAssigned.filter(k => geminiKey.includes(k.key)).map(k => k.id);
+      if (assignedIds.length > 0) { await markPoolKeysUsed(assignedIds); }
+      setCreatedKey(r.reg_key);
+    }
     catch(e){setError(e instanceof Error?e.message:"Failed to create");}
     setCreating(false);
   }
@@ -877,8 +903,34 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
                 <p className="text-xs text-on-surface-variant/40 mt-1 text-center">{regKey.length}/8</p>
               </div>
               <div><label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Customer Label</label><input type="text" value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. John Doe" className={inp}/></div>
-              <div><label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Provider API Key</label>
-                <input type="text" value={geminiKey} onChange={e=>setGeminiKey(e.target.value)} placeholder="AIza... or nvapi-..." className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono"/></div>
+              <div>
+                <label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Provider API Key</label>
+                {/* Auto-assigned pool keys badge */}
+                {loadingPool ? (
+                  <div className="flex items-center gap-2 text-xs text-on-surface-variant mb-2">
+                    <div className="w-3.5 h-3.5 border-2 border-primary/30 border-t-primary rounded-full animate-spin"/>
+                    <span>Fetching keys from pool…</span>
+                  </div>
+                ) : autoAssigned.length > 0 ? (
+                  <div className="flex items-center gap-2 mb-2 p-2 bg-success/5 border border-success/20 rounded-lg">
+                    <span className="material-symbols-outlined text-success text-[16px]" style={{fontVariationSettings:"'FILL' 1"}}>check_circle</span>
+                    <span className="text-xs text-success font-semibold">
+                      {autoAssigned.length} key{autoAssigned.length > 1 ? "s" : ""} auto-assigned from pool
+                      {autoAssigned.length < 3 && <span className="font-normal text-success/70"> (only {autoAssigned.length} available)</span>}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 mb-2 p-2 bg-warning/5 border border-warning/20 rounded-lg">
+                    <span className="material-symbols-outlined text-warning text-[16px]">warning</span>
+                    <span className="text-xs text-warning">No free keys in pool — enter manually or add keys to pool first</span>
+                  </div>
+                )}
+                <textarea value={geminiKey} onChange={e=>setGeminiKey(e.target.value)} placeholder="AIza...,AIza...,AIza... (comma-separated or one key)" rows={2}
+                  className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono resize-none"/>
+                <p className="text-[11px] text-on-surface-variant/50 mt-1">
+                  {geminiKey.split(",").filter(k=>k.trim()).length} key{geminiKey.split(",").filter(k=>k.trim()).length!==1?"s":""} assigned. Supports up to 3 comma-separated keys for automatic rotation.
+                </p>
+              </div>
               <div><label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Model</label>
                 <select value={model} onChange={e=>setModel(e.target.value)} className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface text-sm focus:outline-none focus:border-primary/40 cursor-pointer">
                   <option value="gemini" className="bg-surface">Gemini (gemini-2.5-flash)</option>
