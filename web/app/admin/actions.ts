@@ -223,7 +223,7 @@ export async function testSinglePoolKey(id: string): Promise<{ success: boolean;
   if (error || !data) throw new Error(error ? error.message : "Key not found");
 
   const apiKey = data.key;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
   let status = "error";
   let message = "Unknown error";
@@ -240,26 +240,31 @@ export async function testSinglePoolKey(id: string): Promise<{ success: boolean;
       signal: controller.signal
     });
     clearTimeout(timeoutId);
+    
+    const bodyText = await res.text();
 
     if (res.ok) {
       status = "active";
       message = "";
     } else {
+      let parsedErr = "";
+      try { parsedErr = JSON.parse(bodyText).error?.message; } catch {}
+      
       if (res.status === 429) {
         status = "rate_limited";
-        message = "Quota exceeded (429)";
+        message = parsedErr || "Quota exceeded (429)";
       } else if (res.status === 400) {
         status = "invalid";
-        message = "Invalid key format (400)";
+        message = parsedErr || "Invalid key format (400)";
       } else if (res.status === 403) {
         status = "invalid";
-        message = "Forbidden or disabled (403)";
+        message = parsedErr || "Forbidden or disabled (403)";
       } else if (res.status === 404) {
         status = "invalid";
-        message = "Not found (404)";
+        message = parsedErr || "Not found (404)";
       } else {
         status = "error";
-        message = `HTTP ${res.status}`;
+        message = parsedErr || `HTTP ${res.status}`;
       }
     }
   } catch (err: any) {
@@ -287,7 +292,7 @@ export async function testAllPoolKeys(): Promise<{ id: string; status: string; e
       let errMsg: string | null = null;
       try {
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${k.key}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${k.key}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -300,23 +305,20 @@ export async function testAllPoolKeys(): Promise<{ id: string; status: string; e
         );
         
         const bodyText = await res.text();
+        let parsedErr = "";
+        try { parsedErr = JSON.parse(bodyText).error?.message; } catch {}
         
         if (res.status === 429) { 
           status = "rate_limited"; 
-          errMsg = "Quota exceeded (429)"; 
+          errMsg = parsedErr || "Quota exceeded (429)"; 
         }
         else if (res.status === 400 || res.status === 403 || res.status === 404) { 
           status = "invalid"; 
-          try {
-            const parsed = JSON.parse(bodyText);
-            errMsg = parsed.error?.message || `HTTP ${res.status}`;
-          } catch {
-            errMsg = `HTTP ${res.status}`;
-          }
+          errMsg = parsedErr || `HTTP ${res.status}`;
         }
         else if (!res.ok) { 
           status = "error"; 
-          errMsg = `HTTP ${res.status}`; 
+          errMsg = parsedErr || `HTTP ${res.status}`; 
         }
       } catch (e) {
         status = "error";
