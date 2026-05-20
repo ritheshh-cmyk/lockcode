@@ -1,0 +1,241 @@
+# TITAN System — Full Workflow
+
+---
+
+## 1. System Overview
+
+```mermaid
+graph TD
+    ADMIN["🖥️ Admin Dashboard\n(Vercel / Next.js)"]
+    DB["🗄️ Supabase DB\n(licenses table)"]
+    LAUNCHER["🚀 LockApp.exe\n(launcher.py)"]
+    TITAN["👻 ctfmon.exe\n(TITAN / final.py)"]
+    GEMINI["🤖 Gemini API\n(Google AI)"]
+    USER["👤 User Machine"]
+
+    ADMIN -->|"CREATE / REVOKE / update gemini_key + language"| DB
+    USER -->|"runs"| LAUNCHER
+    LAUNCHER -->|"POST reg_key + machine_id"| API["🔒 /api/validate\n(Edge Function)"]
+    API -->|"lookup + lock machine"| DB
+    DB -->|"gemini_key + language + expires_at"| API
+    API -->|"JSON response"| LAUNCHER
+    LAUNCHER -->|"stdin pipe\n(gemini_key + language)"| TITAN
+    TITAN -->|"Gemini API call"| GEMINI
+    GEMINI -->|"code / MCQ answer"| TITAN
+```
+
+---
+
+## 2. First-Time Activation Flow
+
+```mermaid
+sequenceDiagram
+    actor Admin
+    actor User
+    participant DB as Supabase DB
+    participant API as /api/validate
+    participant Launcher as LockApp.exe
+    participant TITAN as ctfmon.exe
+    participant Gemini as Gemini API
+
+    Note over Admin,DB: STEP 0 — Admin creates license
+    Admin->>DB: INSERT reg_key=12345678, gemini_key=AIza..., language=Java, expires_at=+7d
+
+    Note over User,Launcher: STEP 1 — User runs LockApp.exe
+    User->>Launcher: double-click LockApp.exe
+    Launcher->>Launcher: check %APPDATA%\LockApp\session.json
+    Launcher->>Launcher: no valid cache → show GUI
+
+    Note over User,API: STEP 2 — User enters key
+    User->>Launcher: types 8-digit key e.g. 12345678
+    Launcher->>Launcher: get_machine_id() → SHA256(CPU_UUID:MAC)
+    Launcher->>API: POST {reg_key, machine_id} + X-App-Secret header
+
+    Note over API,DB: STEP 3 — Server validates
+    API->>DB: SELECT * WHERE reg_key = '12345678'
+    DB-->>API: license row (machine_id = NULL → first activation)
+    API->>DB: UPDATE SET machine_id=<hash>, activated_at=now()
+    DB-->>API: ok
+    API-->>Launcher: {valid:true, gemini_key, language, expires_at}
+
+    Note over Launcher,TITAN: STEP 4 — Keys piped to TITAN
+    Launcher->>Launcher: encrypt + write session.json cache (3h TTL)
+    Launcher->>TITAN: spawn ctfmon.exe with stdin=PIPE
+    Launcher->>TITAN: write JSON {gemini_key, language} to stdin
+    Launcher->>Launcher: close pipe, sleep 2s, os._exit(0)
+    TITAN->>TITAN: read stdin on boot → store in RAM globals
+    TITAN->>TITAN: launch PyQt5 GUI (invisible HUD)
+
+    Note over User,Gemini: STEP 5 — User uses TITAN
+    User->>TITAN: press F5 (code) or Alt+Y (MCQ)
+    TITAN->>TITAN: extract foreground window text (uiautomation)
+    TITAN->>Gemini: POST with gemini_key from RAM
+    Gemini-->>TITAN: code answer / MCQ digit
+    TITAN->>User: display in HUD overlay
+```
+
+---
+
+## 3. Returning User Flow (Cache Hit)
+
+```mermaid
+flowchart TD
+    A([User runs LockApp.exe]) --> B{session.json\nexists?}
+    B -- No --> C[Show Registration GUI]
+    B -- Yes --> D{Decrypt with\nFernet key}
+    D -- Corrupt --> C
+    D -- OK --> E{machine_id\nmatches?}
+    E -- No --> C
+    E -- Yes --> F{license\nexpired?}
+    F -- Yes --> C
+    F -- No --> G{cache older\nthan 3 hours?}
+    G -- Yes --> C
+    G -- No --> H{gemini_key\npresent?}
+    H -- Empty --> C
+    H -- Present --> I[Skip GUI entirely]
+    I --> J[Pipe cached gemini_key\n+ language to ctfmon.exe]
+    J --> K([TITAN launches instantly])
+    C --> L[User enters 8-digit key]
+    L --> M[POST to /api/validate]
+    M --> N{Valid?}
+    N -- No --> O[Show error message]
+    O --> L
+    N -- Yes --> P[Write new session.json]
+    P --> J
+```
+
+---
+
+## 4. Admin Panel Operations
+
+```mermaid
+flowchart LR
+    subgraph AdminPanel["🖥️ Admin Panel — /admin"]
+        LOGIN["Password Login\n(ADMIN_PASSWORD env)"]
+        TABLE["License Table\n• reg_key\n• Gemini Key status\n• Language dropdown\n• Status badge\n• Time remaining"]
+        ADD["➕ Add Key Modal\n• 8-digit reg_key\n• Customer label\n• Gemini API key\n• Language\n• Duration (days+hours)"]
+        ROTATE["🔑 Update Gemini Key Modal\n• New Gemini key input\n• Saves to DB instantly"]
+        ACTIONS["Row Actions\n🔑 Update key\n⛔ Revoke\n🔄 Reset machine\n🗑 Delete"]
+    end
+
+    LOGIN --> TABLE
+    TABLE --> ADD
+    TABLE --> ROTATE
+    TABLE --> ACTIONS
+    ADD -->|"supabaseAdmin.insert()"| DB[("Supabase DB")]
+    ROTATE -->|"supabaseAdmin.update(gemini_key)"| DB
+    ACTIONS -->|"update / delete"| DB
+```
+
+---
+
+## 5. Security Architecture
+
+```mermaid
+graph TD
+    subgraph DISK["💾 Disk (what's stored)"]
+        SESSION["session.json\n(Fernet-encrypted)\n• reg_key\n• machine_id hash\n• expires_at\n• gemini_key ✓\n• language ✓\n• cached_at"]
+        GEMINIINI["gemini.ini\n(SSL verify only)\nNo keys here ✓"]
+    end
+
+    subgraph RAM["🧠 RAM Only (never on disk after boot)"]
+        GLOBALS["TITAN globals\n_RUNTIME_API_KEYS[]\n_RUNTIME_LANGUAGE\n(cleared on exit)"]
+    end
+
+    subgraph NETWORK["🌐 Network"]
+        PIPE["stdin pipe\n{gemini_key, language}\n(closes in ~2s)"]
+        APIRESPONSE["HTTPS response\n/api/validate\n(TLS encrypted)"]
+    end
+
+    subgraph NEVER["🚫 Never Exposed"]
+        CLI["CLI arguments ✗"]
+        ENVVAR["Environment variables ✗"]
+        TMPFILE["Temp INI files ✗"]
+        TASKMAN["Task Manager visible ✗"]
+    end
+
+    APIRESPONSE -->|"Launcher reads"| SESSION
+    SESSION -->|"Launcher reads on cache hit"| PIPE
+    PIPE -->|"TITAN reads on boot"| GLOBALS
+    GLOBALS -->|"Used for Gemini calls"| GEMINIINI
+```
+
+---
+
+## 6. TITAN Hotkey Triggers
+
+```mermaid
+graph TD
+    subgraph TRIGGERS["⌨️ Hotkey Triggers"]
+        F5["F5\nCapture foreground window\n→ send to Coding AI"]
+        ALT_Y["Alt+Y\nCapture MCQ window\n→ send to MCQ AI"]
+        F6["F6\nType next line of code\n(autotype one line)"]
+        F2["F2\nHide / Show window"]
+        F3["F3\nStealth mode toggle\n(DWM cloak)"]
+        ALT_T["Alt+T\n⚠ Emergency kill\n(instant exit)"]
+    end
+
+    subgraph AI["🤖 AI Processing"]
+        CODE_THREAD["CodeChatbotThread\n• Model fallback chain\n• Comment stripper\n• 429 retry logic"]
+        MCQ_THREAD["McqChatbotThread\n• Answer: N extractor\n• Route cooldowns\n• Strict retry"]
+    end
+
+    F5 --> CodeExtract["Extract window text\n(uiautomation)"]
+    CodeExtract --> CODE_THREAD
+    CODE_THREAD -->|"response_ready"| HUD["📺 HUD Overlay\n(PyQt5, always-on-top\nscreen-capture proof)"]
+
+    ALT_Y --> McqExtract["Extract MCQ text\n(filtered for question section)"]
+    McqExtract --> MCQ_THREAD
+    MCQ_THREAD -->|"option_ready → digit 1-4"| CURSOR["🖱️ Move cursor to\ncorrect option"]
+    MCQ_THREAD -->|"response_ready"| HUD
+
+    F6 --> TYPER["⌨️ Auto-type next line\n(pyautogui)"]
+    F2 --> TOGGLE["Show/Hide window"]
+    F3 --> CLOAK["DWM SetWindowDisplayAffinity\n(invisible to OBS/screenshots)"]
+    ALT_T --> EXIT["os._exit(0)\nWipes all RAM keys"]
+```
+
+---
+
+## 7. Data Flow Summary
+
+| Stage | What moves | Where |
+|-------|-----------|-------|
+| Admin creates license | `gemini_key`, `language`, `expires_at` | Supabase DB |
+| User activates | `reg_key` + `machine_id` → validated | HTTPS POST |
+| Server returns | `gemini_key`, `language` | HTTPS response |
+| Launcher caches | Encrypted session (Fernet) | `%APPDATA%\LockApp\session.json` |
+| Launcher→TITAN | `gemini_key` + `language` JSON | **stdin pipe only** |
+| TITAN stores | Keys in `_RUNTIME_API_KEYS[]` | **RAM only** |
+| TITAN calls | Gemini REST API | HTTPS |
+| TITAN exit | `os._exit(0)` | RAM cleared |
+
+---
+
+## 8. Component File Map
+
+```
+Desktop\lock\
+├── launcher\
+│   ├── launcher.py        ← main flow: cache → GUI → pipe
+│   ├── launcher_gui.py    ← Tkinter registration window
+│   ├── api_validator.py   ← POST to /api/validate
+│   ├── machine_id.py      ← SHA256(CPU+MAC) fingerprint
+│   └── LockApp.spec       ← PyInstaller build config
+│
+├── web\
+│   ├── app\
+│   │   ├── admin\
+│   │   │   ├── page.tsx   ← Admin dashboard UI
+│   │   │   └── actions.ts ← Server actions (Supabase CRUD)
+│   │   ├── api\validate\
+│   │   │   └── route.ts   ← License validation endpoint
+│   │   └── page.tsx       ← Redirects to /admin
+│   └── lib\supabase.ts    ← Supabase client (anon + admin)
+│
+└── scripts\               ← Dev-only DB utilities
+
+Downloads\lockcode\
+├── final.py               ← TITAN app (PyQt5 HUD + AI threads)
+└── TITAN.spec             ← PyInstaller → dist\ctfmon.exe
+```

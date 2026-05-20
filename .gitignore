@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyd.bak
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# Cython generated C source (huge, regenerated from .pyx)
+titan_engine.c
+
+# Compiled Cython extensions (platform-specific binaries)
+titan_engine.cp*.pyd
+titan_engine.pyd
+
+# PyInstaller builds
+*.exe
+*.spec
+build/
+dist/
+build_artifacts/
+
+# Virtual environments
+.venv/
+.venv310/
+venv/
+env/
+
+# Secrets / local config
+.env
+gemini.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Vercel
+.vercel/
+
+# Supabase local
+supabase/.branches/
+supabase/.temp/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Test artifacts
+test.exe
+test_dl.exe
+test_titan.exe

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TITAN Ecosystem — Visual Workflow</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --card: #1a1d27;
+      --border: #2a2d3e;
+      --primary: #a8b4ff;
+      --text: #e2e8f0;
+      --muted: #6b7280;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      padding: 32px 24px;
+    }
+
+    h1 {
+      text-align: center;
+      color: var(--primary);
+      font-size: 28px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 48px;
+    }
+
+    .section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      margin-bottom: 32px;
+    }
+
+    .section h2 {
+      color: var(--primary);
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+
+    .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+
+    th {
+      background: #252836;
+      color: var(--muted);
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      padding: 10px 14px;
+      text-align: left;
+    }
+
+    td {
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+    }
+
+    .ok {
+      color: #4ade80;
+    }
+
+    .warn {
+      color: #fb923c;
+    }
+
+    .err {
+      color: #f87171;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .tag-g {
+      background: rgba(168, 180, 255, 0.15);
+      color: #a8b4ff;
+    }
+
+    .tag-n {
+      background: rgba(118, 185, 0, 0.15);
+      color: #76b900;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>⚡ TITAN Ecosystem</h1>
+  <p class="subtitle">Full Visual Workflow · Version 2.0 · Multi-Model AI · Hardware-Locked Licensing</p>
+
+  <!-- 1. OVERVIEW -->
+  <div class="section">
+    <h2>1 · 30,000-Foot View — Full Ecosystem</h2>
+    <div class="mermaid">
+      graph TB
+      subgraph CLOUD["☁️ Cloud Layer"]
+      SB[(Supabase\nPostgreSQL)]
+      VR[Vercel / Next.js\nweb-phi-taupe-97.vercel.app]
+      GEMINI[Google Gemini API]
+      NIM[NVIDIA NIM API]
+      end
+      subgraph CLIENT["💻 Client — Windows"]
+      LA[Launcher\nlauncher.py]
+      TI[TITAN Engine\nctfmon.exe]
+      HUD[HUD Overlay]
+      end
+      Admin -->|Manage licenses| VR
+      VR <-->|CRUD| SB
+        User -->|Enter reg key| LA
+        LA -->|POST /api/validate| VR
+        VR -->|gemini_key + model| LA
+        LA -->|stdin pipe| TI
+        TI -->|model=gemini| GEMINI
+        TI -->|model=llama-3.3-70b| NIM
+        GEMINI --> HUD
+        NIM --> HUD
+        User -->|reads| HUD
+    </div>
+  </div>
+
+  <!-- 2. LICENSE FLOW -->
+  <div class="section">
+    <h2>2 · License Activation Flow</h2>
+    <div class="mermaid">
+      sequenceDiagram
+      actor Admin
+      actor User
+      participant Panel as Admin Panel
+      participant API as /api/validate
+      participant DB as Supabase DB
+      participant Launcher
+
+      Admin->>Panel: Login (password)
+      Panel->>Panel: SHA-256 verify
+      Admin->>Panel: Create license\nreg_key + gemini_key + model
+      Panel->>DB: INSERT licenses row
+      DB-->>Admin: ✅ Created
+
+      User->>Launcher: Enter 8-digit reg key
+      Launcher->>API: POST {reg_key, machine_id}
+      API->>DB: SELECT license
+      alt First activation
+      API->>DB: UPDATE machine_id = ?
+      API-->>Launcher: {valid, gemini_key, model}
+      else Returning user
+      API-->>Launcher: {valid, welcome back}
+      else Wrong machine / expired
+      API-->>Launcher: {valid:false}
+      end
+      Launcher->>Launcher: Fernet encrypt → cache session
+      Launcher->>Launcher: Spawn ctfmon.exe
+      Launcher-->>TI: stdin JSON pipe
+    </div>
+  </div>
+
+  <!-- 3. MODEL ROUTING -->
+  <div class="section">
+    <h2>3 · Model Routing — How TITAN Picks the AI</h2>
+    <div class="mermaid">
+      flowchart TD
+      BOOT([ctfmon.exe boots]) --> PIPE{stdin is pipe?}
+      PIPE -->|Yes| PARSE[Parse JSON\ngemini_key · language · model]
+      PIPE -->|No - dev mode| ENV[Read env vars]
+      PARSE --> RAM[Store in RAM globals\n_RUNTIME_MODEL\n_RUNTIME_API_KEYS\n_RUNTIME_LANGUAGE]
+      ENV --> RAM
+      RAM --> KEY{User trigger}
+      KEY -->|F5| MCQ[MCQ Pipeline]
+      KEY -->|Alt+Y| CODE[Coding Pipeline]
+      MCQ --> ROUTE{_RUNTIME_MODEL?}
+      CODE --> ROUTE
+      ROUTE -->|gemini| G[Google API\ngenerativelanguage.googleapis.com\nAuth: ?key=AIza...]
+      ROUTE -->|meta/llama-3.3-70b-instruct| N[NVIDIA NIM\nintegrate.api.nvidia.com\nAuth: Bearer nvapi-...]
+      G --> HUD[HUD Overlay]
+      N --> HUD
+    </div>
+  </div>
+
+  <!-- 4. MCQ PIPELINE -->
+  <div class="section">
+    <h2>4 · MCQ Pipeline — F5 to Answer</h2>
+    <div class="mermaid">
+      flowchart LR
+      A([F5 Pressed]) --> B[Screenshot\nwin32gui]
+      B --> C[Tesseract OCR\nExtract text]
+      C --> D{Question\ndetected?}
+      D -->|No| E[Show: no text]
+      D -->|Yes| F[Build MCQ prompt\n+ system instructions]
+      F --> G{Model?}
+      G -->|gemini| H[Gemini API\n~1-2s\nmax_tokens=2048]
+      G -->|llama-3.3-70b| I[NIM API\ntemp=0.0 top_p=1.0\nmax_tokens=300 · ~2.2s]
+      H --> J[Parse last line\nAnswer: N]
+      I --> J
+      J --> K[Render on HUD\nHighlighted option]
+    </div>
+  </div>
+
+  <!-- 5. CODING PIPELINE -->
+  <div class="section">
+    <h2>5 · Coding Pipeline — Alt+Y to Code</h2>
+    <div class="mermaid">
+      flowchart LR
+      A([Alt+Y Pressed]) --> B[Screenshot\nactive window]
+      B --> C[Extract problem\nOCR / Win32]
+      C --> D[Load language\n_RUNTIME_LANGUAGE]
+      D --> E[Build system prompt\nRaw code only\nNo comments no fences]
+      E --> F{Model?}
+      F -->|gemini| G[Gemini API\n~2-4s\nmax_tokens=8192]
+      F -->|llama-3.3-70b| H[NIM API\ntemp=0.0 top_p=1.0\nmax_tokens=2000 · ~3.2s]
+      G --> I[Strip fences\nClean output]
+      H --> I
+      I --> J[Display code\nMonospace HUD]
+    </div>
+  </div>
+
+  <!-- 6. SECURITY -->
+  <div class="section">
+    <h2>6 · Security Architecture</h2>
+    <div class="mermaid">
+      flowchart LR
+      subgraph NEVER["❌ NEVER"]
+      N1[Key written to disk]
+      N2[Key in CLI args]
+      N3[Key in env vars]
+      N4[Key in Process Explorer]
+      end
+      subgraph ALWAYS["✅ ALWAYS"]
+      A1[stdin pipe — invisible]
+      A2[RAM only\n_RUNTIME_API_KEYS]
+      A3[Alt+T wipe\nctypes zero-fill]
+      A4[HUD excluded\nfrom screen capture]
+      A5[MAC address bound\non first activation]
+      A6[Admin SHA-256\nsupabase admin_config]
+      end
+      subgraph LAUNCHER["🔒 Launcher"]
+      L1[Fernet encrypted\nsession.json]
+      L2[Watchdog auto-restart\nre-pipes keys]
+      L3[Separate RAM space\nlauncher crash safe]
+      end
+    </div>
+  </div>
+
+  <!-- 7. PERFORMANCE -->
+  <div class="section">
+    <h2>7 · Model Performance — Tested Results (2026-05-12)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>MCQ Time</th>
+          <th>Code Time</th>
+          <th>Key Format</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag tag-g">Gemini 2.5 Flash</span></td>
+          <td class="ok">~1-2s</td>
+          <td class="ok">~2-4s</td>
+          <td><code>AIza...</code></td>
+          <td class="ok">✅ Production</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-n">Llama 3.3 70B (NIM)</span></td>
+          <td class="ok">~2.2s</td>
+          <td class="ok">~3.2s</td>
+          <td><code>nvapi-...</code></td>
+          <td class="ok">✅ Production</td>
+        </tr>
+        <tr>
+          <td>Minimax m2.7</td>
+          <td class="err">120s timeout</td>
+          <td class="err">120s</td>
+          <td><code>nvapi-...</code></td>
+          <td class="err">❌ Removed</td>
+        </tr>
+        <tr>
+          <td>GLM 4.7</td>
+          <td class="err">120s timeout</td>
+          <td class="err">120s</td>
+          <td><code>nvapi-...</code></td>
+          <td class="err">❌ Removed</td>
+        </tr>
+        <tr>
+          <td>DeepSeek V4 Flash</td>
+          <td class="err">120s timeout</td>
+          <td class="err">~128s</td>
+          <td><code>nvapi-...</code></td>
+          <td class="err">❌ Removed</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 8. DEPLOYMENT -->
+  <div class="section">
+    <h2>8 · Deployment Status</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>System</th>
+          <th>Status</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Vercel (admin panel)</td>
+          <td class="ok">✅ Live</td>
+          <td>https://web-phi-taupe-97.vercel.app/admin</td>
+        </tr>
+        <tr>
+          <td>GitHub</td>
+          <td class="ok">✅ Pushed</td>
+          <td>commit 69faead · ritheshh-cmyk/lockcode</td>
+        </tr>
+        <tr>
+          <td>Supabase DB</td>
+          <td class="ok">✅ Migrated</td>
+          <td>licenses.model column live</td>
+        </tr>
+        <tr>
+          <td>ctfmon.exe</td>
+          <td class="warn">⚠️ Needs rebuild</td>
+          <td>Rebuild with PyInstaller to ship multi-model</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        background: '#1a1d27',
+        primaryColor: '#252836',
+        primaryTextColor: '#e2e8f0',
+        primaryBorderColor: '#2a2d3e',
+        lineColor: '#a8b4ff',
+        secondaryColor: '#1e2130',
+        tertiaryColor: '#252836',
+        edgeLabelBackground: '#1a1d27',
+        clusterBkg: '#1e2130',
+        titleColor: '#a8b4ff'
+      },
+      flowchart: { curve: 'basis', htmlLabels: true },
+      sequence: { actorMargin: 60 }
+    });
+  </script>
+</body>
+
+</html>
