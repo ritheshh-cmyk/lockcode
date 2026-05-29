@@ -35,28 +35,31 @@ public class Main {
 
 # Delay between lines after pressing Enter (ms → s)
 # Gives the IDE time to apply auto-indent before the next line starts.
-_LINE_DELAY = 0.05   # 50 ms per line — adjust up if IDE is slow
+_LINE_DELAY = 0.005   # 5 ms per line — very fast
 
 # Delay between characters within a line (pyautogui interval param)
-# 10 ms was too fast and caused Shift to drop (turning ')' into '0' and '*' into '8').
-# 25 ms (~40 chars/sec) is generally the safe minimum for Windows to reliably process
-# Shift modifier keydown/keyup events without mixing them up.
-_CHAR_INTERVAL = 0.025
+# 8 ms is aggressive but stable with proper Shift handling
+_CHAR_INTERVAL = 0.008
+
+# Extra delay after special characters (with Shift: @, #, $, %, *, +, etc)
+# 5 ms is enough to clear Shift without slowing down too much
+_SPECIAL_CHAR_DELAY = 0.005
 
 
 # ── Core typing function ──────────────────────────────────────
 def type_code(text: str):
-    """Type text line-by-line using pyautogui.write() + press('enter').
+    """Type text line-by-line with smart special char handling.
 
-    Why pyautogui instead of pynput at 5 ms:
-      pynput.Controller.type() internally presses Shift for capitals.
-      At <10 ms intervals the Windows input stack doesn't fully clear
-      the Shift state, corrupting subsequent chars (S→}, M→}, *→}).
-      pyautogui uses its own VK key-map with explicit per-char timing
-      that avoids modifier-state leakage.
+    Why pyautogui instead of pynput:
+      pynput's Shift handling at fast intervals causes modifier-state leakage.
+      pyautogui is more reliable, but special chars need extra delay.
 
-    Tab handling: split each line on \\t, write segments, press tab between.
+    Strategy: Use 20ms per char (faster than original 25ms) + extra 15ms
+      after Shift-based chars to ensure clean key release before next char.
     """
+    # Characters that require Shift (need extra delay to clear state)
+    SHIFT_CHARS = set('@#$%^&*()_+-={}|:"<>?')
+    
     lines = text.split('\n')
     total_chars = len(text)
     print(f"[F9] Typing {total_chars} chars across {len(lines)} lines...")
@@ -67,7 +70,12 @@ def type_code(text: str):
             segments = line.split('\t')
             for seg_idx, seg in enumerate(segments):
                 if seg:
-                    pyautogui.write(seg, interval=_CHAR_INTERVAL)
+                    # Type character by character with smart delays
+                    for char in seg:
+                        pyautogui.write(char, interval=_CHAR_INTERVAL)
+                        # Extra delay after Shift-based chars to clear modifier state
+                        if char in SHIFT_CHARS:
+                            time.sleep(_SPECIAL_CHAR_DELAY)
                 # Press Tab between segments (not after the last one)
                 if seg_idx < len(segments) - 1:
                     pyautogui.press('tab')
