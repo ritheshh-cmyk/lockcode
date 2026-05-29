@@ -461,6 +461,7 @@ function KeyVaultPage({licenses,loading,onEdit,onRevoke,onTerminate,onReset,onDe
   licenses:License[];loading:boolean;onEdit:(l:License)=>void;onRevoke:(id:string)=>void;
   onTerminate:(id:string)=>void;onReset:(id:string)=>void;onDelete:(id:string)=>void;actionLoading:string|null}) {
   const [search,setSearch]=useState("");
+  const [copiedKey,setCopiedKey]=useState<string|null>(null);
   const filtered=licenses.filter(l=>l.reg_key.includes(search)||(l.label||"").toLowerCase().includes(search.toLowerCase()));
   function statusColor(lic:License){
     if(!lic.is_active) return "border-error/30 text-error";
@@ -468,6 +469,7 @@ function KeyVaultPage({licenses,loading,onEdit,onRevoke,onTerminate,onReset,onDe
     return "border-success/30 text-success";
   }
   function statusLabel(lic:License){if(!lic.is_active)return"Revoked";if(new Date(lic.expires_at)<new Date())return"Expired";return"Active";}
+  function copyKey(k:string){navigator.clipboard.writeText(k);setCopiedKey(k);setTimeout(()=>setCopiedKey(null),1500);}
   return (
     <div className="page-enter">
       <div className="flex items-center justify-between mb-6 stagger-1">
@@ -483,7 +485,12 @@ function KeyVaultPage({licenses,loading,onEdit,onRevoke,onTerminate,onReset,onDe
         :filtered.map((lic,i)=>(
           <div key={lic.id} className="bg-surface-container border border-outline/20 rounded-xl p-5 hover-lift flex flex-col gap-3" style={{animationDelay:`${i*0.04}s`}}>
             <div className="flex items-start justify-between gap-2">
-              <span className={`font-mono text-[13px] tracking-wider px-2.5 py-1 rounded border bg-primary/10 text-primary border-primary/20 break-all`}>{lic.reg_key}</span>
+              <div className="flex items-center gap-1 min-w-0">
+                <span className={`font-mono text-[13px] tracking-wider px-2.5 py-1 rounded border bg-primary/10 text-primary border-primary/20 break-all`}>{lic.reg_key}</span>
+                <button onClick={()=>copyKey(lic.reg_key)} className="p-1 text-on-surface-variant cursor-pointer hover:scale-110 transition-all">
+                  <span className="material-symbols-outlined text-[14px]" style={{fontVariationSettings:copiedKey===lic.reg_key?"'FILL' 1":"'FILL' 0",color:copiedKey===lic.reg_key?"var(--color-success)":undefined}}>{copiedKey===lic.reg_key?"check_circle":"content_copy"}</span>
+                </button>
+              </div>
               <span className={`text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border flex-shrink-0 ${statusColor(lic)}`}>{statusLabel(lic)}</span>
             </div>
             <p className="text-sm font-medium text-on-surface">{lic.label||<span className="text-on-surface-variant/40 italic text-xs">No label</span>}</p>
@@ -853,18 +860,23 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
   const [trialDays,setTrialDays]=useState(0); const [trialHours,setTrialHours]=useState(0);
   const [creating,setCreating]=useState(false); const [createdKey,setCreatedKey]=useState(""); const [error,setError]=useState("");
   const [autoAssigned,setAutoAssigned]=useState<PoolKey[]>([]);
+  const [allPoolKeys,setAllPoolKeys]=useState<PoolKey[]>([]);
+  const [showPoolPicker,setShowPoolPicker]=useState(false);
   const [loadingPool,setLoadingPool]=useState(true);
 
   useEffect(()=>{
     // On mount: fetch up to 3 free keys and pre-fill the geminiKey field
     setLoadingPool(true);
-    fetchFreePoolKeys(3)
-      .then((freeKeys)=>{
-        if (freeKeys.length > 0) {
-          setAutoAssigned(freeKeys);
-          setGeminiKey(freeKeys.map(k => k.key).join(","));
-        }
-      }).catch(()=>{}).finally(()=>setLoadingPool(false));
+    Promise.all([
+      fetchFreePoolKeys(3),
+      fetchPoolKeys()
+    ]).then(([freeKeys, poolKeys])=>{
+      if (freeKeys.length > 0) {
+        setAutoAssigned(freeKeys);
+        setGeminiKey(freeKeys.map(k => k.key).join(","));
+      }
+      setAllPoolKeys(poolKeys);
+    }).catch(()=>{}).finally(()=>setLoadingPool(false));
   },[]);
 
   const inp="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface placeholder-on-surface-variant/40 focus:outline-none focus:border-primary/50 transition-colors text-sm";
@@ -874,9 +886,16 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
     setCreating(true);setError("");
     try{
       const r=await createLicense(regKey,label,trialDays,trialHours,geminiKey,language,model);
-      // Mark the auto-assigned pool keys as used — use exact key match, not substring
+      // Mark selected pool keys as used — combine autoAssigned and allPoolKeys to support manual search
       const currentKeys = new Set(geminiKey.split(",").map(k => k.trim()).filter(Boolean));
-      const assignedIds = autoAssigned.filter(k => currentKeys.has(k.key)).map(k => k.id);
+      const combinedPool = [...autoAssigned, ...allPoolKeys];
+      const uniqueKeysMap = new Map<string, string>(); // key -> id
+      combinedPool.forEach(k => { uniqueKeysMap.set(k.key, k.id); });
+      const assignedIds: string[] = [];
+      currentKeys.forEach(kStr => {
+        const id = uniqueKeysMap.get(kStr);
+        if (id) { assignedIds.push(id); }
+      });
       if (assignedIds.length > 0) { await markPoolKeysUsed(assignedIds); }
       setCreatedKey(r.reg_key);
     }
@@ -920,11 +939,45 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
                     <span className="text-xs text-warning">No free keys in pool — enter manually or add keys to pool first</span>
                   </div>
                 )}
-                <textarea value={geminiKey} onChange={e=>setGeminiKey(e.target.value)} placeholder="AIza...,AIza...,AIza... (comma-separated or one key)" rows={2}
-                  className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono resize-none"/>
+                <div className="flex gap-2">
+                  <textarea value={geminiKey} onChange={e=>setGeminiKey(e.target.value)} placeholder="AIza...,AIza...,AIza... (comma-separated or one key)" rows={2}
+                    className="flex-1 px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-tertiary placeholder-on-surface-variant/40 focus:outline-none focus:border-tertiary/40 text-sm font-mono resize-none"/>
+                  <button type="button" onClick={()=>setShowPoolPicker(p=>!p)} title="Assign from Pool"
+                    className={`px-3 py-2 border rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1 self-start ${showPoolPicker?"bg-primary/10 text-primary border-primary/40":"bg-surface-container border-outline/50 text-on-surface-variant hover:text-primary hover:border-primary/50"}`}>
+                    <span className="material-symbols-outlined text-[17px]">dataset</span>
+                  </button>
+                </div>
                 <p className="text-[11px] text-on-surface-variant/50 mt-1">
                   {geminiKey.split(",").filter(k=>k.trim()).length} key{geminiKey.split(",").filter(k=>k.trim()).length!==1?"s":""} assigned. Supports up to 3 comma-separated keys for automatic rotation.
                 </p>
+                {showPoolPicker&&(
+                  <div className="mt-2 bg-surface-container-low border border-outline/30 rounded-xl overflow-hidden max-h-40 overflow-y-auto">
+                    {allPoolKeys.filter(k=>!k.used).length===0
+                      ?<p className="text-xs text-on-surface-variant p-3 text-center italic">No available keys in pool.</p>
+                      :allPoolKeys.filter(k=>!k.used).map(k=>(
+                        <button key={k.id} type="button" onClick={()=>{
+                          const existing = geminiKey.split(",").map(s=>s.trim()).filter(Boolean);
+                          if (!existing.includes(k.key) && existing.length < 3) {
+                            setGeminiKey([...existing, k.key].join(","));
+                          } else if (existing.includes(k.key)) {
+                            // Already included — do nothing
+                          } else {
+                            existing[existing.length-1] = k.key;
+                            setGeminiKey(existing.join(","));
+                          }
+                          setShowPoolPicker(false);
+                        }}
+                          className="w-full flex items-center gap-3 px-3 py-2 hover:bg-primary/10 transition-colors cursor-pointer text-left">
+                          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                            k.status==="active"?"bg-success":k.status==="rate_limited"?"bg-warning":"bg-outline"
+                          }`}/>
+                          <span className="font-mono text-xs text-tertiary flex-1 truncate">{k.key.slice(0,24)}&hellip;</span>
+                          {k.label&&<span className="text-[10px] text-on-surface-variant">{k.label}</span>}
+                        </button>
+                      ))
+                    }
+                  </div>
+                )}
               </div>
               <div><label className="block text-xs font-semibold text-on-surface-variant mb-1.5 uppercase tracking-wider">Model</label>
                 <select value={model} onChange={e=>setModel(e.target.value)} className="w-full px-4 py-2.5 bg-surface-container border border-outline/50 rounded-lg text-on-surface text-sm focus:outline-none focus:border-primary/40 cursor-pointer">
@@ -938,7 +991,12 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
                 <div className="flex gap-3">
                   <div className="flex-1"><input type="number" value={trialDays} onChange={e=>setTrialDays(Number(e.target.value))} min={0} className={inp}/><p className="text-xs text-on-surface-variant/40 mt-1 text-center">Days</p></div>
                   <div className="flex-1"><input type="number" value={trialHours} onChange={e=>setTrialHours(Number(e.target.value))} min={0} max={23} className={inp}/><p className="text-xs text-on-surface-variant/40 mt-1 text-center">Hours</p></div>
-                </div></div>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button type="button" onClick={()=>{setTrialDays(1); setTrialHours(0);}} className="flex-1 py-1.5 bg-surface-container border border-outline/30 rounded-lg text-xs font-semibold text-on-surface-variant hover:text-primary hover:border-primary/50 transition-all cursor-pointer">1-Day Trial</button>
+                  <button type="button" onClick={()=>{setTrialDays(2); setTrialHours(0);}} className="flex-1 py-1.5 bg-surface-container border border-outline/30 rounded-lg text-xs font-semibold text-on-surface-variant hover:text-primary hover:border-primary/50 transition-all cursor-pointer">2-Day Trial</button>
+                </div>
+              </div>
               {error&&<p className="text-error text-sm">{error}</p>}
             </div>
             <div className="flex gap-3 mt-6">
