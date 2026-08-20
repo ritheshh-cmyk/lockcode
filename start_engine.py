@@ -33,9 +33,6 @@ def _read_credentials_from_stdin():
 
 
 if __name__ == "__main__":
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtCore import QTimer
-
     # ── Read credentials from launcher via stdin pipe (zero disk footprint) ──
     api_keys, language, model = _read_credentials_from_stdin()
 
@@ -44,10 +41,13 @@ if __name__ == "__main__":
     titan_engine._RUNTIME_LANGUAGE    = language
     titan_engine._RUNTIME_MODEL       = model
 
-    app    = QApplication(sys.argv)
+    # ── HEADLESS MODE: no window, engine runs silently in background ──
+    import time
     window = titan_engine.UnifiedChatbotUI(api_keys=api_keys)
 
-    # Defer show until Qt event loop has painted once so HWND is valid
-    QTimer.singleShot(50, window.show_window)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
 
-    sys.exit(app.exec_())
