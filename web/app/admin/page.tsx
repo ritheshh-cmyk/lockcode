@@ -887,18 +887,18 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
     try{
       const {data: r, error: createErr}=await createLicense(regKey,label,trialDays,trialHours,geminiKey,language,model);
       if(createErr||!r){setError(createErr??"Failed to create license");setCreating(false);return;}
-      // Mark selected pool keys as used — combine autoAssigned and allPoolKeys to support manual search
+
+      // Fire pool key marking in background — don't let it block success
       const currentKeys = new Set(geminiKey.split(",").map(k => k.trim()).filter(Boolean));
       const combinedPool = [...autoAssigned, ...allPoolKeys];
-      const uniqueKeysMap = new Map<string, string>(); // key -> id
+      const uniqueKeysMap = new Map<string, string>();
       combinedPool.forEach(k => { uniqueKeysMap.set(k.key, k.id); });
       const assignedIds: string[] = [];
-      currentKeys.forEach(kStr => {
-        const id = uniqueKeysMap.get(kStr);
-        if (id) { assignedIds.push(id); }
-      });
-      if (assignedIds.length > 0) { await markPoolKeysUsed(assignedIds); }
-      setCreatedKey(r.reg_key);
+      currentKeys.forEach(kStr => { const id=uniqueKeysMap.get(kStr); if(id) assignedIds.push(id); });
+      if (assignedIds.length > 0) { markPoolKeysUsed(assignedIds).catch(()=>{}); }
+
+      // Success — close modal and refresh list
+      onCreated();
     }
     catch(e){setError(e instanceof Error?e.message:"Failed to create");}
     setCreating(false);
