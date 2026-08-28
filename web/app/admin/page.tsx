@@ -885,7 +885,8 @@ function AddKeyModal({onClose,onCreated}:{onClose:()=>void;onCreated:()=>void}) 
     if (trialDays<=0&&trialHours<=0){setError("Set at least 1 day or 1 hour");return;}
     setCreating(true);setError("");
     try{
-      const r=await createLicense(regKey,label,trialDays,trialHours,geminiKey,language,model);
+      const {data: r, error: createErr}=await createLicense(regKey,label,trialDays,trialHours,geminiKey,language,model);
+      if(createErr||!r){setError(createErr??"Failed to create license");setCreating(false);return;}
       // Mark selected pool keys as used — combine autoAssigned and allPoolKeys to support manual search
       const currentKeys = new Set(geminiKey.split(",").map(k => k.trim()).filter(Boolean));
       const combinedPool = [...autoAssigned, ...allPoolKeys];

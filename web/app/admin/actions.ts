@@ -83,32 +83,35 @@ export async function createLicense(
   geminiKey: string,
   language: string,
   model: string = "gemini"
-): Promise<License> {
-  const reg_key = regKey.trim();
-  if (!/^\d{8}$/.test(reg_key)) throw new Error("Key must be exactly 8 digits");
-  const totalMs = trialDays * 24 * 60 * 60 * 1000 + trialHours * 60 * 60 * 1000;
-  if (totalMs <= 0) throw new Error("Duration must be greater than 0");
-  const expires_at = new Date(Date.now() + totalMs).toISOString();
+): Promise<{ data: License | null; error: string | null }> {
+  try {
+    const reg_key = regKey.trim();
+    if (!/^\d{8}$/.test(reg_key)) return { data: null, error: "Key must be exactly 8 digits" };
+    const totalMs = trialDays * 24 * 60 * 60 * 1000 + trialHours * 60 * 60 * 1000;
+    if (totalMs <= 0) return { data: null, error: "Duration must be greater than 0" };
+    const expires_at = new Date(Date.now() + totalMs).toISOString();
 
-  const { data, error } = await supabaseAdmin
-    .from("licenses")
-    .insert({
-      reg_key,
-      label: label.trim() || null,
-      expires_at,
-      // Sanitize each key in a comma-separated list, remove empty slots
-      gemini_key: geminiKey.split(",").map(k => k.trim()).filter(Boolean).join(",") || null,
-      language: language || "Java",
-      model
-    })
-    .select("id, reg_key, label, gemini_key, language, model, expires_at, is_active, machine_id, activated_at, created_at")
-    .single();
+    const { data, error } = await supabaseAdmin
+      .from("licenses")
+      .insert({
+        reg_key,
+        label: label.trim() || null,
+        expires_at,
+        gemini_key: geminiKey.split(",").map(k => k.trim()).filter(Boolean).join(",") || null,
+        language: language || "Java",
+        model
+      })
+      .select("id, reg_key, label, gemini_key, language, model, expires_at, is_active, machine_id, activated_at, created_at")
+      .single();
 
-  if (error) {
-    if (error.code === "23505") throw new Error("Registration key already exists");
-    throw new Error(error.message);
+    if (error) {
+      if (error.code === "23505") return { data: null, error: "Registration key already exists" };
+      return { data: null, error: error.message };
+    }
+    return { data: data as License, error: null };
+  } catch (e: any) {
+    return { data: null, error: e?.message ?? "Unexpected server error" };
   }
-  return data as License;
 }
 
 export async function revokeLicense(id: string): Promise<void> {
