@@ -57,3 +57,10 @@
 15. **Per-User Rolling Request Buffer (Circular Storage)**:
     - To provide full prompt/response inspection and token consumption metrics without unbound database bloat, enforce an immediate post-insert rotation query (`delete where id in (select id from request_history where reg_key = ? order by created_at desc offset 10)`).
     - Use direct REST `fetch` calls to Supabase REST endpoints (`/rest/v1/request_history`) within Next.js Edge Runtime handlers to avoid cold start latency and heavy client bundle overhead.
+
+
+## Centralized AI Brain & Next.js Production Architecture
+16. **Dynamic Provider Cascades & Streaming Interoperability**:
+    - In Next.js 16, multi-provider streaming endpoints (`/api/bridge/stream`) cascading across varied upstream APIs (Groq, OpenAI, Gemini SSE, DeepSeek, Anthropic, Custom) must use standard Web Streams API (`ReadableStream` / `TransformStream`) returning `Content-Type: text/event-stream`.
+    - Universal bridge endpoints (`/api/bridge/generate`, `/api/bridge/stream`) must normalize both `body.prompt` and `body.question` to maintain zero-friction interoperability with legacy and updated desktop client binaries.
+    - Browser-based playground simulators must never hardcode test license keys in state; always default to `'anonymous'` with a dynamic dropdown selector populated from valid database licenses to prevent accidental 403 killswitch rejections.
