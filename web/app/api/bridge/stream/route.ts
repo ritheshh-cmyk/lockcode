@@ -19,14 +19,14 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Parse request
-  let body: { prompt?: string; systemPrompt?: string; model?: string; regKey?: string; mode?: string };
+  let body: { prompt?: string; question?: string; systemPrompt?: string; model?: string; regKey?: string; mode?: string };
   try {
     body = await req.json();
   } catch {
     return new NextResponse("Invalid JSON", { status: 400 });
   }
 
-  const userPrompt = sanitizePrompt((body.prompt || "").trim());
+  const userPrompt = sanitizePrompt((body.prompt || body.question || "").trim());
   if (!userPrompt) {
     return new NextResponse("Prompt is required", { status: 400 });
   }
