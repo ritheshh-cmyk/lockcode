@@ -163,20 +163,20 @@ export function TokenTelemetryTab({ licenses }: TokenTelemetryTabProps) {
           <div className="p-0.5 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center text-xs">
             <button
               onClick={() => setViewScope("global")}
-              className={`px-3 py-1 rounded-lg font-medium transition-all ${
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all duration-200 ios-press ${
                 viewScope === "global"
-                  ? "bg-white/[0.15] text-white shadow-sm"
-                  : "text-[#86868b] hover:text-white"
+                  ? "bg-white/[0.18] text-white shadow-sm shadow-black/50 border border-white/[0.12]"
+                  : "text-[#86868b] hover:text-white hover:bg-white/[0.04] border border-transparent"
               }`}
             >
               System Overview
             </button>
             <button
               onClick={() => setViewScope("key")}
-              className={`px-3 py-1 rounded-lg font-medium transition-all ${
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all duration-200 ios-press ${
                 viewScope === "key"
-                  ? "bg-white/[0.15] text-white shadow-sm"
-                  : "text-[#86868b] hover:text-white"
+                  ? "bg-white/[0.18] text-white shadow-sm shadow-black/50 border border-white/[0.12]"
+                  : "text-[#86868b] hover:text-white hover:bg-white/[0.04] border border-transparent"
               }`}
             >
               Single Client

@@ -103,7 +103,7 @@ export default function HistoryPage() {
         <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[700px] h-[350px] bg-[#0a84ff]/10 rounded-full blur-[120px]" />
       </div>
 
-      <div className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+      <div className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12 ios-page-enter">
         {/* Apple macOS Chrome Header */}
         <header className="flex items-center justify-between pb-6 border-b border-white/[0.08] mb-8">
           <div className="flex items-center space-x-3.5">

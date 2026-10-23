@@ -197,8 +197,8 @@ export default function AdminControlCenter() {
           licensesCount={licenses.length}
         />
 
-        {/* Tab Content Display */}
-        <div className="transition-all duration-200">
+        {/* Tab Content Display with iOS Spring Dissolve */}
+        <div key={activeTab} className="ios-tab-enter will-change-transform">
           {activeTab === "brain" && (
             <BrainProvidersTab
               providers={providers}
