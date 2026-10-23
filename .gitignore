@@ -1,3 +1,10 @@
+# Dependencies
+node_modules/
+lock/web/node_modules/
+lock/web/.next/
+web/node_modules/
+web/.next/
+
 # Virtual environments
 .venv/
 .venv*/
@@ -25,6 +32,7 @@ titan_engine.c
 # Secrets & environment
 .env
 .env.*
+.env.local
 *.ini
 gemini.ini
 
@@ -32,13 +40,9 @@ gemini.ini
 scratch/
 .temp/
 .vercel/
-supabase/
 
 # OS / IDE
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
-
-# Subdirectory repos
-lock/
