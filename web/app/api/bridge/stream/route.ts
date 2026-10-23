@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getActiveProviders, AIProviderRecord } from "@/lib/brain";
+import { getActiveProviders, AIProviderRecord, getUserAllottedProvider } from "@/lib/brain";
 import { sanitizePrompt } from "@/lib/sanitize";
 
 export const runtime = "nodejs";
@@ -33,8 +33,24 @@ export async function POST(req: NextRequest) {
 
   const systemPrompt = (body.systemPrompt || "").trim();
 
-  // 3. Resolve active providers from Brain
-  const providers = await getActiveProviders();
+  // 3. Resolve active providers from Brain with user license allotment
+  const regKey = (body.regKey || req.headers.get("x-reg-key") || "anonymous").trim();
+  let providers = await getActiveProviders();
+  const allottedModel = await getUserAllottedProvider(regKey);
+  if (allottedModel && allottedModel !== "all" && allottedModel !== "auto") {
+    const byId = providers.filter((p) => p.id.toLowerCase() === allottedModel);
+    if (byId.length > 0) {
+      providers = byId;
+    } else {
+      const byFamily = providers.filter(
+        (p) => p.provider.toLowerCase() === allottedModel || p.model.toLowerCase().includes(allottedModel)
+      );
+      if (byFamily.length > 0) {
+        providers = byFamily;
+      }
+    }
+  }
+
   if (providers.length === 0) {
     return new NextResponse("No active AI providers configured in Brain", { status: 503 });
   }

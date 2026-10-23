@@ -8,16 +8,18 @@ import {
   resetLicense,
   deleteLicense,
   updateLicense,
+  updateLicenseModel,
   getActiveClientPresence,
 } from "../actions";
 import { BulkLicenseModal } from "./BulkLicenseModal";
 
 interface LicensesTabProps {
   licenses: License[];
+  providers?: Array<{ id: string; label: string; provider: string; model: string }>;
   onRefresh: () => void;
 }
 
-export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
+export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTabProps) {
   const [filter, setFilter] = useState<"all" | "active" | "expired" | "revoked">("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
@@ -27,6 +29,7 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
   const [customKey, setCustomKey] = useState("");
   const [durationDays, setDurationDays] = useState(1);
   const [language, setLanguage] = useState("Java");
+  const [allottedModel, setAllottedModel] = useState("all");
   const [label, setLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -99,6 +102,7 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
     handleGenerateRandomKey();
     setDurationDays(1);
     setLanguage("Java");
+    setAllottedModel("all");
     setLabel("");
     setErrorMsg("");
     setModalOpen(true);
@@ -114,7 +118,7 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
       days: Number(durationDays) || 1,
       label: label.trim() || undefined,
       language: language.trim() || "Java",
-      model: "gemini",
+      model: allottedModel.trim() || "all",
     });
 
     setSaving(false);
@@ -266,6 +270,7 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
                   <th className="py-3 px-4">Label / Customer</th>
                   <th className="py-3 px-4">Hardware Binding</th>
                   <th className="py-3 px-4">Language</th>
+                  <th className="py-3 px-4">Allotted Provider</th>
                   <th className="py-3 px-4">Expiry Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
@@ -350,6 +355,35 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
                         <span className="px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] font-mono text-[11px] text-white/80">
                           {l.language || "Java"}
                         </span>
+                      </td>
+
+                      {/* Allotted Provider Control */}
+                      <td className="py-3.5 px-4">
+                        <select
+                          value={l.model || "all"}
+                          onChange={async (e) => {
+                            const newModel = e.target.value;
+                            await updateLicenseModel(l.id, newModel);
+                            onRefresh();
+                          }}
+                          className="bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] rounded-lg px-2 py-1 text-[11px] text-white focus:outline-none focus:border-[#0a84ff] font-medium transition-colors cursor-pointer"
+                        >
+                          <option value="all" className="bg-[#1c1c1e] text-white">✦ Auto (All Providers)</option>
+                          <option value="gemini" className="bg-[#1c1c1e] text-emerald-400">Gemini Pool Only</option>
+                          <option value="groq" className="bg-[#1c1c1e] text-amber-400">Groq Only (⚡ Llama-3.3)</option>
+                          <option value="openai" className="bg-[#1c1c1e] text-cyan-400">OpenAI Only</option>
+                          <option value="deepseek" className="bg-[#1c1c1e] text-blue-400">DeepSeek Only</option>
+                          <option value="anthropic" className="bg-[#1c1c1e] text-purple-400">Anthropic Only</option>
+                          {providers && providers.length > 0 && (
+                            <optgroup label="Specific Pinned Providers" className="bg-[#1c1c1e] text-white/50">
+                              {providers.map((p) => (
+                                <option key={p.id} value={p.id} className="bg-[#1c1c1e] text-white">
+                                  Pinned: {p.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          )}
+                        </select>
                       </td>
 
                       {/* Expiry Status */}
@@ -493,6 +527,34 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
                 </select>
               </div>
 
+              {/* Allotted AI Provider */}
+              <div>
+                <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                  Allotted AI Provider / Policy
+                </label>
+                <select
+                  value={allottedModel}
+                  onChange={(e) => setAllottedModel(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
+                >
+                  <option value="all" className="bg-[#1c1c1e]">✦ Auto (All Providers / Brain Cascade)</option>
+                  <option value="gemini" className="bg-[#1c1c1e]">Gemini Pool Only</option>
+                  <option value="groq" className="bg-[#1c1c1e]">Groq Only (⚡ Llama-3.3)</option>
+                  <option value="openai" className="bg-[#1c1c1e]">OpenAI Only</option>
+                  <option value="deepseek" className="bg-[#1c1c1e]">DeepSeek Only</option>
+                  <option value="anthropic" className="bg-[#1c1c1e]">Anthropic Only</option>
+                  {providers && providers.length > 0 && (
+                    <optgroup label="Specific Pinned Providers" className="bg-[#1c1c1e] text-white/50">
+                      {providers.map((p) => (
+                        <option key={p.id} value={p.id} className="bg-[#1c1c1e]">
+                          Pinned: {p.label} ({p.model})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+
               {/* Label */}
               <div>
                 <label className="block text-xs font-medium text-[#86868b] mb-1.5">
@@ -538,6 +600,7 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
       {/* 5. Bulk Mint Modal */}
       {bulkModalOpen && (
         <BulkLicenseModal
+          providers={providers}
           onClose={() => setBulkModalOpen(false)}
           onSuccess={() => {
             setBulkModalOpen(false);

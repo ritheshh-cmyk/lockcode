@@ -139,6 +139,40 @@ export function invalidateProvidersCache(): void {
   lastCacheFetchTime = 0;
 }
 
+// ── In-Memory License Provider Allotment Cache (15s TTL) ──
+const licenseAllotmentCache = new Map<string, { model: string | null; expiry: number }>();
+
+export async function getUserAllottedProvider(regKey: string): Promise<string | null> {
+  if (!regKey || regKey === "anonymous") return null;
+  const now = Date.now();
+  const cached = licenseAllotmentCache.get(regKey);
+  if (cached && cached.expiry > now) {
+    return cached.model;
+  }
+
+  try {
+    const { data } = await supabaseAdmin
+      .from("licenses")
+      .select("model")
+      .eq("reg_key", regKey)
+      .maybeSingle();
+
+    const model = data?.model ? String(data.model).trim().toLowerCase() : null;
+    licenseAllotmentCache.set(regKey, { model, expiry: now + 15_000 });
+    return model;
+  } catch {
+    return null;
+  }
+}
+
+export function invalidateLicenseAllotmentCache(regKey?: string): void {
+  if (regKey) {
+    licenseAllotmentCache.delete(regKey);
+  } else {
+    licenseAllotmentCache.clear();
+  }
+}
+
 // ── Provider Execution Adapters ──
 
 async function callOpenAICompatible(
@@ -536,7 +570,27 @@ export async function executeBrainQuery(params: {
 
   const providers = await getActiveProviders();
   const routingConfig = await getRoutingConfig();
-  const modeOrdered = applyModeRouting(providers, mode, routingConfig);
+
+  // Filter providers by specific user license allotment (if configured by admin)
+  let eligibleProviders = providers;
+  const allottedModel = await getUserAllottedProvider(regKey);
+  if (allottedModel && allottedModel !== "all" && allottedModel !== "auto") {
+    // 1. Try matching exact provider ID
+    const byId = providers.filter((p) => p.id.toLowerCase() === allottedModel);
+    if (byId.length > 0) {
+      eligibleProviders = byId;
+    } else {
+      // 2. Try matching provider family (e.g. "gemini", "groq", "openai", "deepseek", "anthropic")
+      const byFamily = providers.filter(
+        (p) => p.provider.toLowerCase() === allottedModel || p.model.toLowerCase().includes(allottedModel)
+      );
+      if (byFamily.length > 0) {
+        eligibleProviders = byFamily;
+      }
+    }
+  }
+
+  const modeOrdered = applyModeRouting(eligibleProviders, mode, routingConfig);
   const orderedProviders = applyLoadBalancing(modeOrdered, routingConfig.strategy);
 
   const failoverHistory: Array<{ provider: string; model: string; error: string; status?: number }> = [];

@@ -6,12 +6,14 @@ import { createBulkLicenses } from "../actions";
 interface BulkLicenseModalProps {
   onClose: () => void;
   onSuccess: (keys: string[]) => void;
+  providers?: Array<{ id: string; label: string; provider: string; model: string }>;
 }
 
-export function BulkLicenseModal({ onClose, onSuccess }: BulkLicenseModalProps) {
+export function BulkLicenseModal({ onClose, onSuccess, providers = [] }: BulkLicenseModalProps) {
   const [count, setCount] = useState(10);
   const [trialDays, setTrialDays] = useState(30);
   const [label, setLabel] = useState("");
+  const [allottedModel, setAllottedModel] = useState("all");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ keys: string[]; created: number } | null>(null);
   const [error, setError] = useState("");
@@ -24,7 +26,7 @@ export function BulkLicenseModal({ onClose, onSuccess }: BulkLicenseModalProps) 
     setLoading(true);
     setError("");
     try {
-      const res = await createBulkLicenses(count, trialDays, label);
+      const res = await createBulkLicenses(count, trialDays, label, allottedModel);
       if (res.error) {
         setError(res.error);
       } else {
@@ -186,6 +188,31 @@ export function BulkLicenseModal({ onClose, onSuccess }: BulkLicenseModalProps) 
                   onChange={(e) => setLabel(e.target.value)}
                   style={inputStyle}
                 />
+              </div>
+
+              <div>
+                <div style={labelStyle}>Allotted AI Provider Policy</div>
+                <select
+                  value={allottedModel}
+                  onChange={(e) => setAllottedModel(e.target.value)}
+                  style={inputStyle}
+                >
+                  <option value="all" style={{ background: "#1c1c1e" }}>✦ Auto (All Active Providers / Cascade)</option>
+                  <option value="gemini" style={{ background: "#1c1c1e" }}>Gemini Pool Only</option>
+                  <option value="groq" style={{ background: "#1c1c1e" }}>Groq Only (⚡ Llama-3.3)</option>
+                  <option value="openai" style={{ background: "#1c1c1e" }}>OpenAI Only</option>
+                  <option value="deepseek" style={{ background: "#1c1c1e" }}>DeepSeek Only</option>
+                  <option value="anthropic" style={{ background: "#1c1c1e" }}>Anthropic Only</option>
+                  {providers && providers.length > 0 && (
+                    <optgroup label="Specific Pinned Providers" style={{ background: "#1c1c1e" }}>
+                      {providers.map((p) => (
+                        <option key={p.id} value={p.id} style={{ background: "#1c1c1e" }}>
+                          Pinned: {p.label} ({p.model})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
               </div>
             </div>
 
