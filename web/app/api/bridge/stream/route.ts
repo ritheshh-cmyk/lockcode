@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getActiveProviders, AIProviderRecord, getUserAllottedProvider } from "@/lib/brain";
+import { getActiveProviders, AIProviderRecord, getUserAllottedProvider, executeBrainQuery } from "@/lib/brain";
 import { sanitizePrompt } from "@/lib/sanitize";
 
 export const runtime = "nodejs";
@@ -75,6 +75,42 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // 5. Ultimate Fallback: Synthesize SSE Stream via Brain Execution Engine
+  try {
+    const brainRes = await executeBrainQuery({
+      prompt: userPrompt,
+      systemPrompt,
+      mode: body.mode || "code",
+      regKey,
+    });
+
+    if (brainRes.success && brainRes.text) {
+      const ssePayload = JSON.stringify({
+        candidates: [
+          {
+            content: { parts: [{ text: brainRes.text }], role: "model" },
+            finishReason: "STOP",
+            index: 0,
+          },
+        ],
+        modelVersion: brainRes.model,
+      });
+
+      const sseChunk = `data: ${ssePayload}\n\n`;
+      return new NextResponse(sseChunk, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Provider": brainRes.provider,
+          "X-Model": brainRes.model,
+        },
+      });
+    }
+  } catch {
+    // fall through
+  }
+
   return new NextResponse("All streaming providers failed or were unavailable", { status: 502 });
 }
 
@@ -86,25 +122,32 @@ async function openProviderStream(
 ): Promise<Response | null> {
   const model = modelOverride || provider.model;
 
-  // Gemini native SSE stream
+  // Gemini native SSE stream with pool rotation
   if (provider.provider === "gemini") {
-    const primaryKey = provider.api_key.split(",")[0]?.trim();
-    if (!primaryKey) return null;
+    const keys = provider.api_key.split(",").map((k) => k.trim()).filter(Boolean);
+    if (keys.length === 0) return null;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-      model
-    )}:streamGenerateContent?alt=sse&key=${encodeURIComponent(primaryKey)}`;
+    for (const key of keys) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          model
+        )}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`;
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
-      }),
-    });
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
+          }),
+        });
 
-    return res.ok && res.body ? res : null;
+        if (res.ok && res.body) return res;
+      } catch {
+        // try next key in pool
+      }
+    }
+    return null;
   }
 
   // OpenAI-compatible SSE stream (Groq, DeepSeek, OpenAI, Anthropic via bridge, Custom, OpenRouter)
