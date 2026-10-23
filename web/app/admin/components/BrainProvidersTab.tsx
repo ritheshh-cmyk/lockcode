@@ -74,6 +74,22 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
   const [auditing, setAuditing] = useState(false);
   const [auditResultMsg, setAuditResultMsg] = useState("");
   const [chaosTarget, setChaosTarget] = useState<string | null>(null);
+  const [autoAudit, setAutoAudit] = useState(true);
+  const [auditCountdown, setAuditCountdown] = useState(30);
+
+  useEffect(() => {
+    if (!autoAudit) return;
+    const iv = setInterval(() => {
+      setAuditCountdown((prev) => {
+        if (prev <= 1) {
+          triggerHealthAudit().then(() => onRefresh());
+          return 30;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [autoAudit, onRefresh]);
 
   const handleRunHealthAudit = async () => {
     setAuditing(true);
@@ -382,6 +398,20 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Live Auto-Watcher Pill */}
+          <button
+            onClick={() => setAutoAudit(!autoAudit)}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-medium flex items-center space-x-1.5 transition-all ${
+              autoAudit
+                ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
+                : "bg-white/[0.04] border-white/[0.08] text-[#86868b] hover:text-white"
+            }`}
+            title="Automatically run concurrent provider health checks in the background"
+          >
+            <span className={`w-2 h-2 rounded-full ${autoAudit ? "bg-emerald-400 animate-ping" : "bg-[#86868b]"}`}></span>
+            <span>{autoAudit ? `Watcher Active (${auditCountdown}s)` : "Live Watcher: Off"}</span>
+          </button>
+
           {auditResultMsg && (
             <span className="text-xs text-emerald-400 font-medium px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
               {auditResultMsg}

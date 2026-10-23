@@ -58,12 +58,32 @@ export function SystemSpecsTab() {
     },
     {
       method: "POST",
+      path: "/api/bridge/stream",
+      desc: "Real-time SSE token streaming cascade across all active streaming providers.",
+    },
+    {
+      method: "POST",
+      path: "/api/bridge/mcq",
+      desc: "Direct Brain MCQ solver with structured option and rationale parsing.",
+    },
+    {
+      method: "GET",
+      path: "/api/bridge/health",
+      desc: "Operational health status, active provider counts, and circuit breaker metrics.",
+    },
+    {
+      method: "GET",
+      path: "/api/admin/health-check",
+      desc: "Autonomous concurrent latency audit and circuit breaker health watcher.",
+    },
+    {
+      method: "POST",
       path: "/api/validate",
       desc: "Client registration key validation and hardware ID binding.",
     },
     {
       method: "GET",
-      path: "/api/history?reg_key=12345678",
+      path: "/api/history?global=true",
       desc: "Token consumption telemetry and 10-query circular buffer retrieval.",
     },
   ];
