@@ -196,6 +196,16 @@ export async function updateLanguage(id: string, language: string): Promise<void
   if (error) throw new Error(error.message);
 }
 
+/** Standalone model/allotted provider update — used by inline dropdown in the table */
+export async function updateLicenseModel(id: string, model: string): Promise<void> {
+  requireId(id, "updateLicenseModel");
+  const { error } = await supabaseAdmin
+    .from("licenses").update({ model: model || "all" }).eq("id", id);
+  if (error) throw new Error(error.message);
+  const { invalidateLicenseAllotmentCache } = await import("@/lib/brain");
+  invalidateLicenseAllotmentCache();
+}
+
 
 // ── API Key Pool (Supabase-backed) ───────────────────────────
 
@@ -653,11 +663,12 @@ export async function pingTestProvider(provider: {
 export async function createBulkLicenses(
   count: number,
   trialDays: number,
-  label: string
+  label: string,
+  model: string = "all"
 ): Promise<{ created: number; keys: string[]; error?: string }> {
   try {
     const keys: string[] = [];
-    const rows: Array<{ reg_key: string; label: string | null; expires_at: string }> = [];
+    const rows: Array<{ reg_key: string; label: string | null; expires_at: string; model: string }> = [];
     const expires_at = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
 
     const existingKeys = new Set<string>();
@@ -671,7 +682,7 @@ export async function createBulkLicenses(
       if (!existingKeys.has(key)) {
         existingKeys.add(key);
         keys.push(key);
-        rows.push({ reg_key: key, label: label || null, expires_at });
+        rows.push({ reg_key: key, label: label || null, expires_at, model: model || "all" });
       }
     }
 
