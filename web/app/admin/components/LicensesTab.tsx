@@ -9,6 +9,7 @@ import {
   deleteLicense,
   updateLicense,
 } from "../actions";
+import { BulkLicenseModal } from "./BulkLicenseModal";
 
 interface LicensesTabProps {
   licenses: License[];
@@ -19,6 +20,7 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
   const [filter, setFilter] = useState<"all" | "active" | "expired" | "revoked">("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
   // Form State
   const [customKey, setCustomKey] = useState("");
@@ -193,6 +195,14 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
               </button>
             ))}
           </div>
+
+          <button
+            onClick={() => setBulkModalOpen(true)}
+            className="apple-btn-secondary px-3.5 py-2 text-xs font-semibold flex items-center space-x-1.5 whitespace-nowrap"
+          >
+            <span className="material-symbols-outlined text-[18px]">layers</span>
+            <span>Bulk Mint</span>
+          </button>
 
           <button
             onClick={handleOpenAddModal}
@@ -477,6 +487,17 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
             </form>
           </div>
         </div>
+      )}
+
+      {/* 5. Bulk Mint Modal */}
+      {bulkModalOpen && (
+        <BulkLicenseModal
+          onClose={() => setBulkModalOpen(false)}
+          onSuccess={() => {
+            setBulkModalOpen(false);
+            onRefresh();
+          }}
+        />
       )}
     </div>
   );
