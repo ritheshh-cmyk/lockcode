@@ -1,252 +1,263 @@
 "use client";
+
 import { useEffect } from "react";
+import Link from "next/link";
 
 const diagrams = [
   {
-    title: "1 · Full Ecosystem Overview",
+    title: "1 · Full Ecosystem & Cascade Topology",
+    description: "Multi-tier network routing with Vercel Edge Bridge failover.",
     code: `graph TB
-    subgraph CLOUD["☁️ Cloud Layer"]
-        SB[(Supabase DB)]
-        VR[Vercel Next.js]
-        GEMINI[Google Gemini API]
-        NIM[NVIDIA NIM API]
+    subgraph CLOUD["☁️ Cloud Infrastructure (Vercel & AI Providers)"]
+        VR["Vercel Edge Bridge (/api/bridge)"]
+        GEMINI["Tier 1: Google Gemini Flash"]
+        GROQ["Tier 2: Groq Llama-3.3-70B (Failover)"]
+        NV["Tier 3: NVIDIA NIM (Backup)"]
+        SB[("Supabase (Keys, Quotas, History)")]
     end
-    subgraph CLIENT["💻 Client — Windows"]
-        LA[Launcher launcher.py]
-        TI[TITAN ctfmon.exe]
-        HUD[HUD Overlay]
+    subgraph CLIENT["💻 Client Node (Windows Lockdown Environment)"]
+        LA["Launcher (titan.exe)"]
+        TI["Protected Engine (ctfmon.exe)"]
+        MSAA["Pure MSAA Screen Extractor"]
     end
-    Admin -->|Manage licenses| VR
-    VR <-->|CRUD| SB
-    User -->|Enter reg key| LA
-    LA -->|POST /api/validate| VR
-    VR -->|gemini_key + model| LA
-    LA -->|stdin pipe| TI
-    TI -->|model=gemini| GEMINI
-    TI -->|model=llama-3.3-70b| NIM
-    GEMINI --> HUD
-    NIM --> HUD
-    User -->|reads answer| HUD`,
+    User -->|Enters 8-digit Key| LA
+    LA -->|Validates License| VR
+    VR <-->|Quota Verification| SB
+    LA -->|Pipes Key via stdin| TI
+    TI -->|F5 / Alt+Y Capture| MSAA
+    MSAA -->|Clean DOM Text| TI
+    TI -->|POST /api/bridge/generate| VR
+    VR -->|Primary 3.5s Timeout| GEMINI
+    VR -.->|Fallback on 429/403| GROQ
+    VR -.->|Emergency Backup| NV
+    VR -->|Auto-Logs History Cap <= 10| SB
+    VR -->|Compilable Code| TI
+    TI -->|Humanized Keystroke Injection| Target["Target Editor / Browser"]`,
   },
   {
-    title: "2 · Model Routing Logic",
+    title: "2 · Multi-Tier Cascade & Session Circuit Breaker",
+    description: "Instant failover logic protecting against Campus Wi-Fi DPI and Rate Limits.",
     code: `flowchart TD
-    BOOT([ctfmon.exe boots]) --> PIPE{stdin pipe?}
-    PIPE -->|Yes| PARSE[Parse JSON\ngemini_key · language · model]
-    PIPE -->|No| ENV[Read env vars]
-    PARSE --> RAM[RAM globals\n_RUNTIME_MODEL\n_RUNTIME_API_KEYS]
-    ENV --> RAM
-    RAM --> KEY{Hotkey pressed}
-    KEY -->|F5| CODE[Coding pipeline]
-    KEY -->|Alt+Y| MCQ[MCQ pipeline]
-    CODE --> ROUTE{model?}
-    MCQ --> ROUTE
-    ROUTE -->|gemini| G[Google Gemini\nAIza... key]
-    ROUTE -->|llama-3.3-70b| N[NVIDIA NIM\nnvapi-... key]
-    G --> HUD[HUD Overlay]
-    N --> HUD`,
+    REQ([Request Triggered: F5 or Alt+Y]) --> C1{Circuit Breaker Open?}
+    C1 -->|Yes: Campus Blocked| T2["Direct Route: Tier 2 (Vercel Bridge)"]
+    C1 -->|No| T1["Tier 1: Direct Gemini (3.5s fail-fast)"]
+    T1 -->|HTTP 200 OK| SUCCESS([Deliver Code])
+    T1 -->|HTTP 403 / 429 / Timeout| TRIP["Trip Circuit Breaker (campus_blocked=True)"]
+    TRIP --> T2
+    T2 -->|Vercel Key Pool| G_SERVER["Server-Side Gemini"]
+    G_SERVER -->|HTTP 200| SUCCESS
+    G_SERVER -->|Server Rate Limit 429| GROQ_SERVER["Server-Side Groq Llama-3.3-70B"]
+    GROQ_SERVER -->|300 tok/sec| SUCCESS
+    GROQ_SERVER -->|Failed| NV_SERVER["Server-Side NVIDIA Backup"]
+    NV_SERVER --> SUCCESS`,
   },
   {
-    title: "3 · All Hotkeys & Magic Sequences",
-    code: `flowchart LR
-    subgraph HOTKEYS["⌨️ Hotkeys"]
-        F5[F5 Code capture]
-        ALT[Alt+Y MCQ capture]
-        F6[F6 Type next line]
-        F9[F9 Paste ALL instantly]
-        F7[F7 Ghost mode ON]
-        F8[F8 Ghost mode OFF]
-        F2[F2 Hide/Show HUD]
-        F3[F3 Stealth cycle]
-        ALTT[Alt+T Emergency exit]
-    end
-    subgraph MAGIC["✨ Magic Sequences"]
-        DC[..c Code capture]
-        DM[..m MCQ capture]
-        DG[..g Ghost ON]
-        DS[..s Ghost stop]
-        DH[..h Toggle HUD]
-        DT[..t Stealth]
-        DL[..l Line by line]
-        DP[..p Paste ALL]
-        DQ[..q Quit]
-    end
-    F9 -->|clipboard + Ctrl+V| PASTE[Ultra-fast paste\n2s countdown]
-    DP -->|same as F9| PASTE`,
-  },
-  {
-    title: "4 · F9 Paste Flow",
-    code: `sequenceDiagram
-    actor User
-    participant HUD
-    participant CB as Win32 Clipboard
-    participant IDE as Target IDE
-
-    User->>HUD: Press F9 or type ..p
-    HUD->>HUD: Extract code from output
-    alt No code ready
-        HUD-->>User: Press F5 first
-    else Code ready
-        HUD-->>User: Pasting in 2s — click target
-        HUD-->>User: Pasting in 1s — click target
-        HUD->>CB: SetClipboardText full code
-        HUD->>IDE: Simulate Ctrl+V
-        IDE-->>User: Full code pasted instantly
-        HUD-->>User: Pasted N chars done
-    end`,
-  },
-  {
-    title: "5 · License Activation Flow",
-    code: `sequenceDiagram
-    actor Admin
-    actor User
-    participant Panel as Admin Panel
-    participant API as /api/validate
-    participant DB as Supabase
-
-    Admin->>Panel: Create license
-    Panel->>DB: INSERT reg_key + gemini_key + model
-    DB-->>Admin: Created OK
-
-    User->>API: POST reg_key + machine_id
-    API->>DB: SELECT license
-    alt First activation
-        API->>DB: UPDATE machine_id
-        API-->>User: valid + gemini_key + model
-    else Returning user
-        API-->>User: valid welcome back
-    else Wrong machine or expired
-        API-->>User: valid false
-    end
-    User->>User: Fernet cache then spawn ctfmon.exe`,
-  },
-  {
-    title: "6 · Security Model",
+    title: "3 · Hardware Security & RAM-Only Secret Model",
+    description: "Protection against memory dumps, process inspection, and disk forensics.",
     code: `flowchart TD
-    subgraph NEVER["❌ NEVER happens"]
-        N1[Key written to disk]
-        N2[Key in CLI args]
-        N3[Key in env vars]
-        N4[Key visible in process list]
+    subgraph DISK["❌ Zero Disk Residue"]
+        D1["No Keys in INI Files"]
+        D2["No Keys in CLI Arguments"]
+        D3["No Keys in Environment Variables"]
     end
-    subgraph ALWAYS["✅ ALWAYS happens"]
-        A1[Key via stdin pipe only]
-        A2[RAM only _RUNTIME_API_KEYS]
-        A3[Alt+T wipes RAM then os exit]
-        A4[HUD excluded from screen capture]
-        A5[MAC address hardware lock]
-        A6[Admin SHA-256 in Supabase]
-    end`,
+    subgraph MEMORY["🛡️ Volatile Protected Memory"]
+        M1["Keys Injected via Anonymous Stdin Pipe"]
+        M2["Volatile RAM Storage (Cleared on Process Exit)"]
+        M3["Hardware Locked (Machine ID + SHA-256)"]
+        M4["WDA_EXCLUDEFROMCAPTURE (Hidden from Screen Recording)"]
+    end
+    DISK --> MEMORY`,
   },
 ];
 
-const benchmarks = [
-  ["Gemini 2.5 Flash", "~1-2s", "~2-4s", "AIza...", "✅ Production", "#4ade80"],
-  ["Llama 3.3 70B (NIM)", "~2.2s", "~3.2s", "nvapi-...", "✅ Production", "#4ade80"],
-  ["Minimax m2.7", "120s timeout", "120s", "nvapi-...", "❌ Removed", "#f87171"],
-  ["GLM 4.7", "120s timeout", "120s", "nvapi-...", "❌ Removed", "#f87171"],
-  ["DeepSeek V4 Flash", "~128s", "~128s", "nvapi-...", "❌ Removed", "#f87171"],
+const hotkeys = [
+  { key: "F5", name: "Capture & Solve Code", desc: "Extracts foreground editor problem text and streams compilable solution.", badge: "Coding" },
+  { key: "Alt + Y", name: "MCQ Solver", desc: "Extracts question & choices and outputs the exact correct answer label.", badge: "MCQ" },
+  { key: "F6", name: "Type Next Line", desc: "Humanized keystroke simulation line-by-line with dynamic pauses.", badge: "Typing" },
+  { key: "F9", name: "Type Full Solution", desc: "Simulates continuous human typing (38ms character delay, 60ms line pause).", badge: "Typing" },
+  { key: "F2", name: "Toggle HUD Overlay", desc: "Instantly shows or hides the floating answer window.", badge: "Stealth" },
+  { key: "Alt + T", name: "Emergency Memory Wipe", desc: "Immediately wipes credentials from RAM and terminates process.", badge: "Security" },
+];
+
+const tiers = [
+  { provider: "Google Gemini 2.5 Flash", role: "Tier 1: Primary Engine", latency: "~1.2s", status: "Active", color: "#30d158" },
+  { provider: "Groq Llama-3.3-70B", role: "Tier 2: Ultra-Fast Failover", latency: "~0.8s", status: "Active", color: "#30d158" },
+  { provider: "NVIDIA NIM Llama-3.3-70B", role: "Tier 3: Emergency Backup", latency: "~2.1s", status: "Standby", color: "#0a84ff" },
 ];
 
 export default function DocsPage() {
   useEffect(() => {
-    const load = () => {
-      (window as any).mermaid.initialize({
-        startOnLoad: false,
-        theme: "dark",
-        themeVariables: {
-          background: "#1a1d27",
-          primaryColor: "#252836",
-          primaryTextColor: "#e2e8f0",
-          primaryBorderColor: "#3a3d4e",
-          lineColor: "#a8b4ff",
-          secondaryColor: "#1e2130",
-          tertiaryColor: "#252836",
-          edgeLabelBackground: "#1a1d27",
-          clusterBkg: "#1e2130",
-          titleColor: "#a8b4ff",
-          nodeBorder: "#3a3d4e",
-          mainBkg: "#252836",
-        },
-        flowchart: { curve: "basis", useMaxWidth: true },
-        sequence: { actorMargin: 50, useMaxWidth: true },
-      });
-      // Small delay ensures all DOM nodes are painted
-      setTimeout(() => {
-        (window as any).mermaid.run();
-      }, 100);
+    const loadMermaid = () => {
+      if ((window as any).mermaid) {
+        (window as any).mermaid.initialize({
+          startOnLoad: false,
+          theme: "dark",
+          themeVariables: {
+            background: "#161618",
+            primaryColor: "#1c1c1e",
+            primaryTextColor: "#f5f5f7",
+            primaryBorderColor: "rgba(255,255,255,0.15)",
+            lineColor: "#0a84ff",
+            secondaryColor: "#1c1c1e",
+            tertiaryColor: "#161618",
+            edgeLabelBackground: "#000000",
+            clusterBkg: "#0e0e10",
+            titleColor: "#0a84ff",
+            nodeBorder: "rgba(255,255,255,0.12)",
+            mainBkg: "#1c1c1e",
+          },
+          flowchart: { curve: "basis", useMaxWidth: true },
+        });
+        setTimeout(() => {
+          (window as any).mermaid.run();
+        }, 100);
+      }
     };
 
     if ((window as any).mermaid) {
-      load();
+      loadMermaid();
     } else {
       const script = document.createElement("script");
       script.src = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js";
-      script.onload = load;
+      script.onload = loadMermaid;
       document.head.appendChild(script);
     }
   }, []);
 
   return (
-    <div style={{ background: "#0f1117", minHeight: "100vh", padding: "40px 20px", fontFamily: "'Segoe UI',system-ui,sans-serif", color: "#e2e8f0" }}>
-      <div style={{ maxWidth: 960, margin: "0 auto" }}>
+    <div className="min-h-screen bg-black text-[#f5f5f7] font-sans antialiased selection:bg-[#0a84ff]/30 selection:text-white">
+      {/* Top Ambient Light */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[700px] h-[350px] bg-[#0a84ff]/10 rounded-full blur-[120px]" />
+      </div>
 
-        {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: 48 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "rgba(168,180,255,0.08)", border: "1px solid rgba(168,180,255,0.2)", borderRadius: 999, padding: "6px 18px", marginBottom: 16 }}>
-            <span>⚡</span>
-            <span style={{ color: "#a8b4ff", fontSize: 11, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase" }}>TITAN v2.0 · Multi-Model AI</span>
+      <div className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+        {/* Navigation Header */}
+        <header className="flex items-center justify-between pb-6 border-b border-white/[0.08] mb-10">
+          <div className="flex items-center space-x-3.5">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-b from-[#1c1c1e] to-[#0a0a0c] border border-white/[0.12] flex items-center justify-center shadow-lg shadow-black/40">
+              <span className="material-symbols-outlined text-[#0a84ff] text-[22px]">schema</span>
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h1 className="text-lg font-semibold tracking-tight text-white">TITAN AI</h1>
+                <span className="text-[11px] font-medium tracking-wide px-2 py-0.5 rounded-full bg-white/[0.06] text-[#86868b] border border-white/[0.08]">
+                  Developer Docs
+                </span>
+              </div>
+              <p className="text-xs text-[#86868b]">Architecture, Multi-Tier Routing & Operation Protocols</p>
+            </div>
           </div>
-          <h1 style={{ fontSize: 30, fontWeight: 800, margin: "0 0 8px", color: "#e2e8f0" }}>Ecosystem Visual Workflow</h1>
-          <p style={{ color: "#6b7280", fontSize: 13, margin: 0 }}>Hardware-Locked Licensing · Full Flow Diagrams · All Hotkeys</p>
-        </div>
 
-        {/* Diagrams */}
-        {diagrams.map((d, i) => (
-          <div key={i} style={{ background: "#1a1d27", border: "1px solid #2a2d3e", borderRadius: 16, padding: "24px 28px", marginBottom: 24 }}>
-            <h2 style={{ color: "#a8b4ff", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.15em", margin: "0 0 20px", paddingBottom: 12, borderBottom: "1px solid #2a2d3e" }}>
-              {d.title}
+          <div className="flex items-center space-x-2.5">
+            <Link
+              href="/admin"
+              className="apple-btn-secondary px-3.5 py-1.5 text-xs font-medium flex items-center space-x-1.5"
+            >
+              <span className="material-symbols-outlined text-[16px] text-[#86868b]">arrow_back</span>
+              <span>Admin Console</span>
+            </Link>
+            <Link
+              href="/history"
+              className="apple-btn-primary px-3.5 py-1.5 text-xs font-medium flex items-center space-x-1.5"
+            >
+              <span className="material-symbols-outlined text-[16px]">monitoring</span>
+              <span>Token Telemetry</span>
+            </Link>
+          </div>
+        </header>
+
+        {/* Hotkeys Quick Cheatsheet */}
+        <section className="mb-12">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-white tracking-tight flex items-center space-x-2">
+              <span className="material-symbols-outlined text-[18px] text-[#0a84ff]">keyboard</span>
+              <span>Hotkeys & Magic Sequences</span>
             </h2>
-            <div
-              className="mermaid"
-              style={{ display: "flex", justifyContent: "center", overflowX: "auto" }}
-              dangerouslySetInnerHTML={{ __html: d.code }}
-            />
+            <span className="text-xs text-[#86868b]">Global Low-Level Windows Hooks</span>
           </div>
-        ))}
 
-        {/* Benchmarks table */}
-        <div style={{ background: "#1a1d27", border: "1px solid #2a2d3e", borderRadius: 16, padding: "24px 28px", marginBottom: 24 }}>
-          <h2 style={{ color: "#a8b4ff", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.15em", margin: "0 0 20px", paddingBottom: 12, borderBottom: "1px solid #2a2d3e" }}>
-            7 · Performance Benchmarks (Tested 2026-05-12)
-          </h2>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr style={{ background: "#252836" }}>
-                  {["Model", "MCQ", "Code", "Key Format", "Status"].map(h => (
-                    <th key={h} style={{ padding: "10px 14px", color: "#6b7280", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "left", fontWeight: 600 }}>{h}</th>
-                  ))}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {hotkeys.map((h) => (
+              <div key={h.key} className="apple-glass-card rounded-2xl p-4 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="px-2.5 py-1 rounded-lg bg-white/[0.08] border border-white/[0.12] font-mono text-xs font-semibold text-white shadow-sm">
+                      {h.key}
+                    </span>
+                    <span className="text-[10px] uppercase font-semibold tracking-wider text-[#86868b] px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.06]">
+                      {h.badge}
+                    </span>
+                  </div>
+                  <h3 className="text-sm font-medium text-white mb-1">{h.name}</h3>
+                  <p className="text-xs text-[#86868b] leading-relaxed">{h.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Model Cascade Matrix */}
+        <section className="mb-12">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-white tracking-tight flex items-center space-x-2">
+              <span className="material-symbols-outlined text-[18px] text-[#30d158]">swap_calls</span>
+              <span>AI Provider Cascade & SLA Matrix</span>
+            </h2>
+            <span className="text-xs text-[#86868b]">Managed from Vercel Vault</span>
+          </div>
+
+          <div className="apple-glass rounded-2xl overflow-hidden">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-white/[0.03] border-b border-white/[0.06] text-[#86868b] uppercase tracking-wider font-medium">
+                <tr>
+                  <th className="py-3 px-4">Provider / Model</th>
+                  <th className="py-3 px-4">Cascade Tier</th>
+                  <th className="py-3 px-4">Avg Latency</th>
+                  <th className="py-3 px-4 text-right">Status</th>
                 </tr>
               </thead>
-              <tbody>
-                {benchmarks.map(([model, mcq, code, key, status, color], ri) => (
-                  <tr key={ri} style={{ borderTop: "1px solid #2a2d3e" }}>
-                    <td style={{ padding: "10px 14px", fontWeight: 500 }}>{model}</td>
-                    <td style={{ padding: "10px 14px" }}>{mcq}</td>
-                    <td style={{ padding: "10px 14px" }}>{code}</td>
-                    <td style={{ padding: "10px 14px", color: "#6b7280", fontFamily: "monospace", fontSize: 12 }}>{key}</td>
-                    <td style={{ padding: "10px 14px", color: color as string, fontWeight: 600 }}>{status}</td>
+              <tbody className="divide-y divide-white/[0.04]">
+                {tiers.map((t) => (
+                  <tr key={t.provider} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="py-3.5 px-4 font-medium text-white">{t.provider}</td>
+                    <td className="py-3.5 px-4 text-[#86868b]">{t.role}</td>
+                    <td className="py-3.5 px-4 font-mono text-white">{t.latency}</td>
+                    <td className="py-3.5 px-4 text-right">
+                      <span className="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.08] text-[11px] font-medium" style={{ color: t.color }}>
+                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: t.color }} />
+                        <span>{t.status}</span>
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
 
-        <p style={{ textAlign: "center", color: "#374151", fontSize: 11, marginTop: 24 }}>
-          TITAN Ecosystem Docs · v2.0 · 2026-05-12
-        </p>
+        {/* System Architecture Flowcharts */}
+        <section className="space-y-8">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-semibold text-white tracking-tight flex items-center space-x-2">
+              <span className="material-symbols-outlined text-[18px] text-[#bf5af2]">account_tree</span>
+              <span>Architecture & Sequence Topologies</span>
+            </h2>
+            <span className="text-xs text-[#86868b]">Interactive Mermaid Visualizations</span>
+          </div>
+
+          {diagrams.map((d) => (
+            <div key={d.title} className="apple-glass-card rounded-2xl p-5 sm:p-6">
+              <div className="mb-4">
+                <h3 className="text-sm font-semibold text-white tracking-tight">{d.title}</h3>
+                <p className="text-xs text-[#86868b] mt-0.5">{d.description}</p>
+              </div>
+              <div className="p-4 rounded-xl bg-black/40 border border-white/[0.06] overflow-x-auto flex justify-center">
+                <div className="mermaid">{d.code}</div>
+              </div>
+            </div>
+          ))}
+        </section>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -14,18 +14,25 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
+export const viewport: Viewport = {
+  themeColor: "#000000",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
+
 export const metadata: Metadata = {
-  title: "TITAN Agent — Operator Access Portal",
-  description: "Secure license management console",
+  title: "TITAN — Operator Cloud Vault",
+  description: "Next-generation license orchestration, key rotation, and AI telemetry platform.",
 };
 
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className="dark h-full" suppressHydrationWarning>
+    <html lang="en" className="dark h-full bg-black" suppressHydrationWarning>
       <head>
-        {/* Material Symbols Outlined (needed for fingerprint icon) */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link
@@ -34,7 +41,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${inter.variable} ${jetbrainsMono.variable} min-h-full flex flex-col`}
+        className={`${inter.variable} ${jetbrainsMono.variable} min-h-full flex flex-col bg-black text-[#f5f5f7] antialiased selection:bg-[#0a84ff]/30 selection:text-white`}
         suppressHydrationWarning
       >
         {children}
