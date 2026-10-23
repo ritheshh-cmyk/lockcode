@@ -80,6 +80,114 @@
   50%       { box-shadow: 0 0 24px rgba(10, 132, 255, 0.45); }
 }
 
+/* ── Apple iOS Fluid Spring Animations ──────────────── */
+@keyframes ios-tab-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.985) translateY(8px);
+    filter: blur(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes ios-page-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.992) translateY(12px);
+    filter: blur(3px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes ios-scale-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.95) translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes ios-fade-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+}
+
+.ios-tab-enter {
+  animation: ios-tab-enter 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center top;
+}
+
+.ios-page-enter {
+  animation: ios-page-enter 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center top;
+}
+
+.ios-modal-enter {
+  animation: ios-scale-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center center;
+}
+
+.ios-press {
+  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  -webkit-tap-highlight-color: transparent;
+}
+.ios-press:active {
+  transform: scale(0.97);
+}
+
+.ios-press-subtle {
+  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  -webkit-tap-highlight-color: transparent;
+}
+.ios-press-subtle:active {
+  transform: scale(0.985);
+}
+
+.smooth-touch-scroll {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+}
+
+/* View Transitions for native page morphing */
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root) {
+  animation: 180ms cubic-bezier(0.16, 1, 0.3, 1) both ios-fade-out;
+}
+::view-transition-new(root) {
+  animation: 320ms cubic-bezier(0.16, 1, 0.3, 1) both ios-page-enter;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ios-tab-enter,
+  .ios-page-enter,
+  .ios-modal-enter,
+  .page-enter,
+  .animate-fade-in {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 /* ── Apple Liquid Glass & Motion Utilities ──────────────── */
 .apple-glass {
   background-color: rgba(28, 28, 30, 0.65);

@@ -107,6 +107,7 @@ export function BulkLicenseModal({ onClose, onSuccess, providers = [] }: BulkLic
       }}
     >
       <div
+        className="ios-modal-enter"
         style={{
           background: "#1c1c1e",
           borderRadius: "18px",

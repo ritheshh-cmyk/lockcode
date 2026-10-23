@@ -255,16 +255,20 @@ export function PlaygroundTab({ licenses = [] }: PlaygroundTabProps) {
                 <div className="flex items-center space-x-1 p-0.5 rounded-lg bg-white/[0.06] border border-white/[0.08]">
                   <button
                     onClick={() => setViewMode("text")}
-                    className={`px-2 py-0.5 text-[10px] font-semibold rounded-md transition-colors ${
-                      viewMode === "text" ? "bg-white/[0.15] text-white" : "text-[#86868b]"
+                    className={`px-2 py-0.5 text-[10px] font-semibold rounded-md transition-all duration-200 ios-press ${
+                      viewMode === "text"
+                        ? "bg-white/[0.2] text-white shadow-sm border border-white/[0.12]"
+                        : "text-[#86868b] hover:text-white border border-transparent"
                     }`}
                   >
                     Clean Code
                   </button>
                   <button
                     onClick={() => setViewMode("json")}
-                    className={`px-2 py-0.5 text-[10px] font-semibold rounded-md transition-colors ${
-                      viewMode === "json" ? "bg-white/[0.15] text-white" : "text-[#86868b]"
+                    className={`px-2 py-0.5 text-[10px] font-semibold rounded-md transition-all duration-200 ios-press ${
+                      viewMode === "json"
+                        ? "bg-white/[0.2] text-white shadow-sm border border-white/[0.12]"
+                        : "text-[#86868b] hover:text-white border border-transparent"
                     }`}
                   >
                     Raw TITAN JSON

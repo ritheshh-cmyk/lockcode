@@ -225,10 +225,10 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
               <button
                 key={tab}
                 onClick={() => setFilter(tab)}
-                className={`px-3 py-1 rounded-lg capitalize font-medium transition-all ${
+                className={`px-3 py-1 rounded-lg capitalize font-medium transition-all duration-200 ios-press ${
                   filter === tab
-                    ? "bg-white/[0.15] text-white shadow-sm"
-                    : "text-[#86868b] hover:text-white"
+                    ? "bg-white/[0.18] text-white shadow-sm shadow-black/50 border border-white/[0.12]"
+                    : "text-[#86868b] hover:text-white hover:bg-white/[0.04] border border-transparent"
                 }`}
               >
                 {tab}
@@ -443,7 +443,7 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
       {/* ── 4. Add License Modal ── */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-fade-in">
-          <div className="relative w-full max-w-md rounded-3xl bg-[#1c1c1e]/90 border border-white/[0.12] shadow-2xl p-6 sm:p-8 backdrop-blur-2xl">
+          <div className="relative w-full max-w-md rounded-3xl bg-[#1c1c1e]/90 border border-white/[0.12] shadow-2xl p-6 sm:p-8 backdrop-blur-2xl ios-modal-enter">
             <div className="flex items-center justify-between pb-4 border-b border-white/[0.08] mb-6">
               <h3 className="text-base font-semibold text-white tracking-tight">
                 Create Client License
