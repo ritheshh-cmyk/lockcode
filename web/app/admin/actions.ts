@@ -525,6 +525,8 @@ export interface BrainProviderItem {
   model: string;
   base_url: string | null;
   priority: number;
+  weight?: number;
+  preferred_for?: string | null;
   is_active: boolean;
   rate_limited_until: string | null;
   last_error: string | null;
@@ -557,6 +559,8 @@ export async function saveBrainProvider(provider: {
   model: string;
   base_url?: string;
   priority?: number;
+  weight?: number;
+  preferred_for?: string | null;
   is_active?: boolean;
 }): Promise<{ success: boolean; error?: string; provider?: BrainProviderItem }> {
   try {
@@ -570,6 +574,8 @@ export async function saveBrainProvider(provider: {
           model: provider.model.trim(),
           base_url: provider.base_url?.trim() || null,
           priority: provider.priority ?? 1,
+          weight: Math.max(1, Math.min(100, provider.weight ?? 50)),
+          preferred_for: provider.preferred_for || null,
           is_active: provider.is_active ?? true,
         })
         .eq("id", provider.id)
@@ -588,6 +594,8 @@ export async function saveBrainProvider(provider: {
           model: provider.model.trim(),
           base_url: provider.base_url?.trim() || null,
           priority: provider.priority ?? 1,
+          weight: Math.max(1, Math.min(100, provider.weight ?? 50)),
+          preferred_for: provider.preferred_for || null,
           is_active: provider.is_active ?? true,
         })
         .select()
@@ -638,5 +646,124 @@ export async function pingTestProvider(provider: {
 }): Promise<{ success: boolean; latency_ms: number; message?: string }> {
   const { testProviderConnection } = await import("@/lib/brain");
   return testProviderConnection(provider);
+}
+
+// ── Bulk License Generation ──────────────────────────────────────────────────
+
+export async function createBulkLicenses(
+  count: number,
+  trialDays: number,
+  label: string
+): Promise<{ created: number; keys: string[]; error?: string }> {
+  try {
+    const keys: string[] = [];
+    const rows: Array<{ reg_key: string; label: string | null; expires_at: string }> = [];
+    const expires_at = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000).toISOString();
+
+    const existingKeys = new Set<string>();
+    const { data: existing } = await supabaseAdmin.from("licenses").select("reg_key");
+    for (const r of existing || []) existingKeys.add(r.reg_key);
+
+    let attempts = 0;
+    while (rows.length < count && attempts < count * 10) {
+      attempts++;
+      const key = String(Math.floor(10000000 + Math.random() * 90000000));
+      if (!existingKeys.has(key)) {
+        existingKeys.add(key);
+        keys.push(key);
+        rows.push({ reg_key: key, label: label || null, expires_at });
+      }
+    }
+
+    const { error } = await supabaseAdmin.from("licenses").insert(rows);
+    if (error) return { created: 0, keys: [], error: error.message };
+    return { created: rows.length, keys };
+  } catch (e: any) {
+    return { created: 0, keys: [], error: e?.message ?? "Unknown error" };
+  }
+}
+
+// ── Routing Strategy Management ──────────────────────────────────────────────
+
+export interface RoutingConfig {
+  strategy: "waterfall" | "weighted" | "round_robin";
+  preferredCodeProvider: string;
+  preferredMcqProvider: string;
+}
+
+export async function getRoutingStrategy(): Promise<RoutingConfig> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("admin_config")
+      .select("key, value")
+      .in("key", ["routing_strategy", "preferred_code_provider", "preferred_mcq_provider"]);
+    if (!error && data) {
+      const map: Record<string, string> = {};
+      for (const row of data) map[row.key] = row.value;
+      return {
+        strategy: (map["routing_strategy"] || "waterfall") as RoutingConfig["strategy"],
+        preferredCodeProvider: map["preferred_code_provider"] || "auto",
+        preferredMcqProvider: map["preferred_mcq_provider"] || "auto",
+      };
+    }
+  } catch { /* ignore */ }
+  return { strategy: "waterfall", preferredCodeProvider: "auto", preferredMcqProvider: "auto" };
+}
+
+export async function saveRoutingStrategy(config: RoutingConfig): Promise<{ success: boolean; error?: string }> {
+  try {
+    const rows = [
+      { key: "routing_strategy", value: config.strategy },
+      { key: "preferred_code_provider", value: config.preferredCodeProvider },
+      { key: "preferred_mcq_provider", value: config.preferredMcqProvider },
+    ];
+    for (const row of rows) {
+      await supabaseAdmin
+        .from("admin_config")
+        .upsert(row, { onConflict: "key" });
+    }
+    const { invalidateRoutingCache } = await import("@/lib/brain");
+    invalidateRoutingCache();
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? "Failed to save routing config" };
+  }
+}
+
+// ── HWID / Machine Lock Management ──────────────────────────────────────────
+
+export async function resetMachineLock(licenseId: string): Promise<{ success: boolean; error?: string }> {
+  requireId(licenseId, "resetMachineLock");
+  try {
+    const { error } = await supabaseAdmin
+      .from("licenses")
+      .update({ machine_id: null, activated_at: null })
+      .eq("id", licenseId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? "Failed to reset machine lock" };
+  }
+}
+
+export async function updateProviderWeight(
+  providerId: string,
+  weight: number,
+  preferredFor: string | null
+): Promise<{ success: boolean; error?: string }> {
+  requireId(providerId, "updateProviderWeight");
+  try {
+    const { error } = await supabaseAdmin
+      .from("ai_providers")
+      .update({
+        weight: Math.max(1, Math.min(100, weight)),
+        preferred_for: preferredFor || null,
+      })
+      .eq("id", providerId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e?.message ?? "Failed to update provider weight" };
+  }
 }
 

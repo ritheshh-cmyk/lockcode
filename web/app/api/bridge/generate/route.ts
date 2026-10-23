@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeBrainQuery, getActiveProviders } from "@/lib/brain";
+import { supabaseAdmin } from "@/lib/supabase";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 export const maxDuration = 60;
 
 interface UniversalRequestBody {
@@ -36,6 +37,27 @@ function extractSystemPromptFromInstruction(instruction?: { parts?: Array<{ text
 }
 
 /**
+ * Validate license per query (payload-bound killswitch).
+ * Returns null if valid, error string if invalid.
+ */
+async function validateLicenseKey(regKey: string): Promise<string | null> {
+  if (!regKey || regKey === "anonymous") return null; // no validation for anonymous
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("licenses")
+      .select("is_active, expires_at")
+      .eq("reg_key", regKey)
+      .single();
+    if (error || !data) return "License not found";
+    if (!data.is_active) return "License revoked";
+    if (data.expires_at && new Date(data.expires_at) < new Date()) return "License expired";
+    return null; // valid
+  } catch {
+    return null; // fail open (don't block on DB error)
+  }
+}
+
+/**
  * Diagnostic & Health Check GET Handler
  */
 export async function GET(req: NextRequest) {
@@ -45,8 +67,8 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     status: "healthy",
     service: "titan-ai-brain",
-    version: "3.0.0",
-    runtime: "edge",
+    version: "3.1.0",
+    runtime: "nodejs",
     configured: {
       app_secret: hasSecret,
       active_providers_count: activeProviders.length,
@@ -65,6 +87,7 @@ export async function GET(req: NextRequest) {
       "/api/bridge/format",
       "/api/bridge/health",
       "/api/admin/providers",
+      "/api/admin/stream",
     ],
     timestamp: new Date().toISOString(),
   });
@@ -75,7 +98,7 @@ export async function GET(req: NextRequest) {
  * Connects TITAN desktop client to the centralized multi-provider Brain.
  */
 export async function POST(req: NextRequest) {
-  // ── 1. Authenticate Request via Secret Header ──
+  // 1. Authenticate Request via Secret Header
   const appSecret = req.headers.get("x-app-secret");
   const expectedSecret = process.env.APP_SECRET || "lockapp-secret-2026";
 
@@ -86,7 +109,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ── 2. Parse and Validate Request Body ──
+  // 2. Parse and Validate Request Body
   let body: UniversalRequestBody;
   try {
     body = await req.json();
@@ -119,7 +142,16 @@ export async function POST(req: NextRequest) {
   const language = body.language || "Java";
   const regKey = (body.regKey || body.reg_key || req.headers.get("x-reg-key") || "anonymous").trim();
 
-  // ── 3. Execute Query Through Centralized AI Brain ──
+  // 3. Per-query license validation (payload-bound instant killswitch)
+  const licenseError = await validateLicenseKey(regKey);
+  if (licenseError) {
+    return NextResponse.json(
+      { success: false, error: `License validation failed: ${licenseError}`, killswitch: true },
+      { status: 403 }
+    );
+  }
+
+  // 4. Execute Query Through Centralized AI Brain
   const brainResult = await executeBrainQuery({
     prompt: userPrompt,
     systemPrompt,
@@ -140,7 +172,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ── 4. Deliver Exact Standardized TITAN Contract ──
+  // 5. Deliver Exact Standardized TITAN Contract
   return NextResponse.json(
     {
       success: true,

@@ -1,12 +1,15 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   BrainProviderItem,
   saveBrainProvider,
   toggleBrainProvider,
   deleteBrainProvider,
   pingTestProvider,
+  getRoutingStrategy,
+  saveRoutingStrategy,
+  type RoutingConfig,
 } from "../actions";
 
 interface BrainProvidersTabProps {
@@ -25,7 +28,36 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
   const [model, setModel] = useState("llama-3.3-70b-versatile");
   const [baseUrl, setBaseUrl] = useState("");
   const [priority, setPriority] = useState(1);
+  const [weight, setWeight] = useState(50);
+  const [preferredFor, setPreferredFor] = useState<string>("");
   const [isActive, setIsActive] = useState(true);
+
+  // Routing Strategy State
+  const [routingConfig, setRoutingConfig] = useState<RoutingConfig>({
+    strategy: "waterfall",
+    preferredCodeProvider: "auto",
+    preferredMcqProvider: "auto",
+  });
+  const [strategySaving, setStrategySaving] = useState(false);
+  const [strategySavedMsg, setStrategySavedMsg] = useState("");
+
+  useEffect(() => {
+    getRoutingStrategy().then((cfg) => {
+      if (cfg) setRoutingConfig(cfg);
+    });
+  }, []);
+
+  const handleSaveStrategy = async () => {
+    setStrategySaving(true);
+    setStrategySavedMsg("");
+    const res = await saveRoutingStrategy(routingConfig);
+    setStrategySaving(false);
+    if (res.success) {
+      setStrategySavedMsg("Saved live!");
+      setTimeout(() => setStrategySavedMsg(""), 2500);
+      onRefresh();
+    }
+  };
 
   // Test Ping State
   const [testingId, setTestingId] = useState<string | null>(null);
@@ -95,6 +127,8 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
     setModel("llama-3.3-70b-versatile");
     setBaseUrl("https://api.groq.com/openai/v1/chat/completions");
     setPriority(providers.length + 1);
+    setWeight(50);
+    setPreferredFor("");
     setIsActive(true);
     setErrorMsg("");
     setModalTestResult(null);
@@ -109,6 +143,8 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
     setModel(p.model);
     setBaseUrl(p.base_url || "");
     setPriority(p.priority);
+    setWeight(p.weight ?? 50);
+    setPreferredFor(p.preferred_for || "");
     setIsActive(p.is_active);
     setErrorMsg("");
     setModalTestResult(null);
@@ -149,6 +185,8 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
       model: model.trim(),
       base_url: baseUrl.trim() || undefined,
       priority: Number(priority) || 1,
+      weight: Number(weight) || 50,
+      preferred_for: preferredFor || null,
       is_active: isActive,
     });
 
@@ -329,6 +367,106 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
         </div>
       </div>
 
+      {/* 2.5 Routing Engine Strategy & Mode Dispatch Panel */}
+      <div className="apple-glass-card rounded-2xl p-5 border border-white/[0.1] bg-white/[0.02]">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/[0.06]">
+          <div>
+            <div className="text-sm font-semibold text-white tracking-tight flex items-center space-x-2">
+              <span className="material-symbols-outlined text-[20px] text-purple-400">tune</span>
+              <span>Intelligent Load Balancing & Mode Dispatch</span>
+            </div>
+            <div className="text-xs text-[#86868b] mt-0.5">
+              Control how Vercel routes TITAN queries across providers based on exam mode and latency.
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            {strategySavedMsg && (
+              <span className="text-xs text-emerald-400 font-medium animate-fade-in flex items-center space-x-1">
+                <span className="material-symbols-outlined text-[14px]">check</span>
+                <span>{strategySavedMsg}</span>
+              </span>
+            )}
+            <button
+              onClick={handleSaveStrategy}
+              disabled={strategySaving}
+              className="apple-btn-primary px-4 py-1.5 text-xs font-semibold flex items-center space-x-1.5 shadow-md shadow-[#0a84ff]/20 disabled:opacity-50"
+            >
+              {strategySaving && (
+                <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+              )}
+              <span>Save Strategy</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
+          {/* Strategy Selector */}
+          <div>
+            <label className="block text-xs font-medium text-[#86868b] mb-2 uppercase tracking-wider text-[10px]">
+              Load Balancing Mode
+            </label>
+            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-white/[0.04] border border-white/[0.08]">
+              {[
+                { id: "waterfall", label: "Waterfall" },
+                { id: "weighted", label: "Weighted %" },
+                { id: "round_robin", label: "Round-Robin" },
+              ].map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setRoutingConfig((c) => ({ ...c, strategy: s.id as any }))}
+                  className={`py-1.5 text-[11px] rounded-lg font-medium transition-all ${
+                    routingConfig.strategy === s.id
+                      ? "bg-white/[0.15] text-white shadow-sm border border-white/[0.2]"
+                      : "text-[#86868b] hover:text-white"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Preferred MCQ Engine */}
+          <div>
+            <label className="block text-xs font-medium text-[#86868b] mb-1.5 uppercase tracking-wider text-[10px]">
+              Preferred MCQ Engine (Sub-500ms)
+            </label>
+            <select
+              value={routingConfig.preferredMcqProvider}
+              onChange={(e) => setRoutingConfig((c) => ({ ...c, preferredMcqProvider: e.target.value }))}
+              className="w-full px-3 py-2 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
+            >
+              <option value="auto" className="bg-[#1c1c1e]">Auto (Fastest Latency Tier)</option>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id} className="bg-[#1c1c1e]">
+                  {p.label} ({p.provider} • {p.model})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Preferred Code Engine */}
+          <div>
+            <label className="block text-xs font-medium text-[#86868b] mb-1.5 uppercase tracking-wider text-[10px]">
+              Preferred Code Engine (Deep Reasoner)
+            </label>
+            <select
+              value={routingConfig.preferredCodeProvider}
+              onChange={(e) => setRoutingConfig((c) => ({ ...c, preferredCodeProvider: e.target.value }))}
+              className="w-full px-3 py-2 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
+            >
+              <option value="auto" className="bg-[#1c1c1e]">Auto (Highest Priority Deep Reasoner)</option>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id} className="bg-[#1c1c1e]">
+                  {p.label} ({p.provider} • {p.model})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
       {/* ── 3. Providers List / Apple Glass Cards ── */}
       {providers.length === 0 ? (
         <div className="apple-glass-card rounded-2xl p-12 text-center flex flex-col items-center justify-center">
@@ -395,6 +533,19 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
                         </span>
                         <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-white/[0.06] text-[#86868b] border border-white/[0.08]">
                           {p.provider}
+                        </span>
+                        {p.preferred_for === "mcq" && (
+                          <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/25">
+                            MCQ Speed ⚡
+                          </span>
+                        )}
+                        {p.preferred_for === "code" && (
+                          <span className="text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-400 border border-purple-500/25">
+                            Code Engine 💻
+                          </span>
+                        )}
+                        <span className="text-[10px] font-mono text-[#86868b] bg-white/[0.04] px-2 py-0.5 rounded-md border border-white/[0.06]">
+                          Weight: {p.weight ?? 50}%
                         </span>
                         {p.priority === 1 && (
                           <span className="text-[9px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
@@ -614,6 +765,41 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
                   placeholder="e.g. https://api.groq.com/openai/v1/chat/completions"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff] focus:ring-1 focus:ring-[#0a84ff]/30"
                 />
+              </div>
+
+              {/* Routing Specialization & Weight */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                    Mode Specialization
+                  </label>
+                  <select
+                    value={preferredFor}
+                    onChange={(e) => setPreferredFor(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
+                  >
+                    <option value="" className="bg-[#1c1c1e]">General / Fallback (Any)</option>
+                    <option value="mcq" className="bg-[#1c1c1e]">MCQ Fast-Solver (⚡ Speed)</option>
+                    <option value="code" className="bg-[#1c1c1e]">Code Engine (💻 Deep Reasoning)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-medium text-[#86868b]">
+                      Load Weight
+                    </label>
+                    <span className="text-xs font-mono font-bold text-white">{weight}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={100}
+                    value={weight}
+                    onChange={(e) => setWeight(Number(e.target.value))}
+                    className="w-full h-2 bg-white/[0.1] rounded-lg appearance-none cursor-pointer accent-[#0a84ff] mt-2.5"
+                  />
+                </div>
               </div>
 
               {/* Priority & Active */}

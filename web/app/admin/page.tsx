@@ -13,6 +13,7 @@ import { CupertinoTabs, ControlCenterTab } from "./components/CupertinoTabs";
 import { BrainProvidersTab } from "./components/BrainProvidersTab";
 import { LicensesTab } from "./components/LicensesTab";
 import { TokenTelemetryTab } from "./components/TokenTelemetryTab";
+import { LiveRadarTab } from "./components/LiveRadarTab";
 import { PlaygroundTab } from "./components/PlaygroundTab";
 import { SystemSpecsTab } from "./components/SystemSpecsTab";
 
@@ -216,6 +217,10 @@ export default function AdminControlCenter() {
             <TokenTelemetryTab
               licenses={licenses}
             />
+          )}
+
+          {activeTab === "radar" && (
+            <LiveRadarTab />
           )}
 
           {activeTab === "simulator" && (

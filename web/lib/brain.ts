@@ -1,5 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { logRequestHistory, estimateTokens } from "@/lib/history";
+import { sanitizePrompt, sanitizeCodeResponse } from "@/lib/sanitize";
+import { broadcastEvent, createEventId } from "@/lib/events";
 
 export interface AIProviderRecord {
   id: string;
@@ -9,6 +11,8 @@ export interface AIProviderRecord {
   model: string;
   base_url: string | null;
   priority: number;
+  weight?: number;
+  preferred_for?: "mcq" | "code" | null | string;
   is_active: boolean;
   rate_limited_until: string | null;
   last_error: string | null;
@@ -400,6 +404,98 @@ async function recordProviderMetrics(
   }
 }
 
+// ── Routing Strategy Cache (60s TTL) ──────────────────────────────────────
+let cachedRoutingConfig: { strategy: string; preferredCode?: string; preferredMcq?: string } | null = null;
+let lastRoutingFetchTime = 0;
+const ROUTING_CACHE_TTL_MS = 60_000;
+
+export async function getRoutingConfig(): Promise<{ strategy: string; preferredCode?: string; preferredMcq?: string }> {
+  const now = Date.now();
+  if (cachedRoutingConfig && now - lastRoutingFetchTime < ROUTING_CACHE_TTL_MS) {
+    return cachedRoutingConfig;
+  }
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("admin_config")
+      .select("key, value")
+      .in("key", ["routing_strategy", "preferred_code_provider", "preferred_mcq_provider"]);
+    if (!error && data) {
+      const map: Record<string, string> = {};
+      for (const row of data) map[row.key] = row.value;
+      cachedRoutingConfig = {
+        strategy: map["routing_strategy"] || "waterfall",
+        preferredCode: map["preferred_code_provider"] || "auto",
+        preferredMcq: map["preferred_mcq_provider"] || "auto",
+      };
+      lastRoutingFetchTime = now;
+      return cachedRoutingConfig;
+    }
+  } catch { /* use default */ }
+  cachedRoutingConfig = { strategy: "waterfall", preferredCode: "auto", preferredMcq: "auto" };
+  lastRoutingFetchTime = now;
+  return cachedRoutingConfig;
+}
+
+export function invalidateRoutingCache(): void {
+  cachedRoutingConfig = null;
+  lastRoutingFetchTime = 0;
+}
+
+function applyModeRouting(
+  providers: AIProviderRecord[],
+  mode: string,
+  config: { preferredCode?: string; preferredMcq?: string }
+): AIProviderRecord[] {
+  const preferredId = mode === "code" ? config.preferredCode : mode === "mcq" ? config.preferredMcq : "auto";
+  if (!preferredId || preferredId === "auto") {
+    if (mode === "mcq") {
+      const mcqProviders = providers.filter((p) => p.preferred_for === "mcq");
+      if (mcqProviders.length > 0) {
+        const others = providers.filter((p) => p.preferred_for !== "mcq");
+        return [...mcqProviders, ...others];
+      }
+    } else if (mode === "code") {
+      const codeProviders = providers.filter((p) => p.preferred_for === "code");
+      if (codeProviders.length > 0) {
+        const others = providers.filter((p) => p.preferred_for !== "code");
+        return [...codeProviders, ...others];
+      }
+    }
+    return providers;
+  }
+  const pinned = providers.find((p) => p.id === preferredId);
+  if (!pinned) return providers;
+  return [pinned, ...providers.filter((p) => p.id !== preferredId)];
+}
+
+let rrIndex = 0;
+
+function applyLoadBalancing(
+  providers: AIProviderRecord[],
+  strategy: string
+): AIProviderRecord[] {
+  if (providers.length <= 1 || strategy === "waterfall") return providers;
+
+  if (strategy === "round_robin") {
+    rrIndex = (rrIndex + 1) % providers.length;
+    return [...providers.slice(rrIndex), ...providers.slice(0, rrIndex)];
+  }
+
+  if (strategy === "weighted") {
+    const weights = providers.map((p) => Math.max(1, p.weight ?? 50));
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    let rand = Math.random() * totalWeight;
+    let chosen = 0;
+    for (let i = 0; i < weights.length; i++) {
+      rand -= weights[i];
+      if (rand <= 0) { chosen = i; break; }
+    }
+    return [providers[chosen], ...providers.filter((_, i) => i !== chosen)];
+  }
+
+  return providers;
+}
+
 /**
  * Central "Brain" execution engine:
  * Evaluates available active providers, handles priority cascading and automatic failover,
@@ -414,7 +510,8 @@ export async function executeBrainQuery(params: {
   regKey?: string;
 }): Promise<BrainQueryResult> {
   const startTime = Date.now();
-  const prompt = (params.prompt || "").trim();
+  // Strip zero-width watermarks from inbound prompt
+  const prompt = sanitizePrompt((params.prompt || "").trim());
   let systemPrompt = (params.systemPrompt || "").trim();
   const mode = (params.mode || "code").toLowerCase();
   const regKey = (params.regKey || "anonymous").trim();
@@ -434,11 +531,14 @@ export async function executeBrainQuery(params: {
   }
 
   const providers = await getActiveProviders();
-  const failoverHistory: Array<{ provider: string; model: string; error: string; status?: number }> = [];
+  const routingConfig = await getRoutingConfig();
+  const modeOrdered = applyModeRouting(providers, mode, routingConfig);
+  const orderedProviders = applyLoadBalancing(modeOrdered, routingConfig.strategy);
 
+  const failoverHistory: Array<{ provider: string; model: string; error: string; status?: number }> = [];
   const now = new Date();
 
-  for (const provider of providers) {
+  for (const provider of orderedProviders) {
     // Circuit breaker: skip if provider is currently in rate-limit backoff
     if (provider.rate_limited_until) {
       const backoffUntil = new Date(provider.rate_limited_until);
@@ -460,11 +560,26 @@ export async function executeBrainQuery(params: {
     if (result.success && result.text) {
       const totalLatency = Date.now() - startTime;
       const cleanText = result.text.trim();
+      const finalText = mode === "code" ? sanitizeCodeResponse(cleanText) : cleanText;
       const pTokens = estimateTokens(prompt);
-      const cTokens = estimateTokens(cleanText);
+      const cTokens = estimateTokens(finalText);
 
       // Asynchronously update provider metrics
       recordProviderMetrics(provider.id, providerLatency, true);
+
+      // Broadcast real-time query event via live SSE radar
+      broadcastEvent({
+        id: createEventId(),
+        type: "query",
+        timestamp: new Date().toISOString(),
+        provider: provider.provider,
+        model: provider.model,
+        mode,
+        reg_key: regKey,
+        latency_ms: totalLatency,
+        tokens: { prompt: pTokens, completion: cTokens, total: pTokens + cTokens },
+        success: true,
+      });
 
       // Record request history (rolling 10 items per user)
       try {
@@ -472,7 +587,7 @@ export async function executeBrainQuery(params: {
           reg_key: regKey,
           mode,
           prompt,
-          response: cleanText,
+          response: finalText,
           provider: provider.provider,
           model: provider.model,
           latency_ms: totalLatency,
@@ -486,7 +601,7 @@ export async function executeBrainQuery(params: {
 
       return {
         success: true,
-        text: cleanText,
+        text: finalText,
         provider: provider.provider,
         model: provider.model,
         latency_ms: totalLatency,
@@ -498,7 +613,7 @@ export async function executeBrainQuery(params: {
         candidates: [
           {
             content: {
-              parts: [{ text: cleanText }],
+              parts: [{ text: finalText }],
               role: "model",
             },
             finishReason: "STOP",
@@ -508,7 +623,7 @@ export async function executeBrainQuery(params: {
           {
             message: {
               role: "assistant",
-              content: cleanText,
+              content: finalText,
             },
             finish_reason: "stop",
           },
@@ -531,6 +646,17 @@ export async function executeBrainQuery(params: {
 
   // If all providers failed
   const totalLatency = Date.now() - startTime;
+  broadcastEvent({
+    id: createEventId(),
+    type: "error",
+    timestamp: new Date().toISOString(),
+    mode,
+    reg_key: regKey,
+    latency_ms: totalLatency,
+    success: false,
+    error: "All AI providers in the Brain cascade failed or exhausted their rate limits.",
+  });
+
   return {
     success: false,
     text: "",

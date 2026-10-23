@@ -2,7 +2,7 @@
 
 import React from "react";
 
-export type ControlCenterTab = "brain" | "licenses" | "telemetry" | "simulator" | "specs";
+export type ControlCenterTab = "brain" | "licenses" | "telemetry" | "radar" | "simulator" | "specs";
 
 interface CupertinoTabsProps {
   activeTab: ControlCenterTab;
@@ -37,6 +37,12 @@ export function CupertinoTabs({
       label: "Token Telemetry",
       icon: "monitoring",
       color: "text-amber-400",
+    },
+    {
+      id: "radar" as ControlCenterTab,
+      label: "Live Radar (SSE)",
+      icon: "radar",
+      color: "text-rose-400",
     },
     {
       id: "simulator" as ControlCenterTab,
