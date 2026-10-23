@@ -441,3 +441,78 @@ export async function clearPoolKeys(): Promise<void> {
   const { error } = await supabaseAdmin.from("api_key_pool").delete().neq("id", "00000000-0000-0000-0000-000000000000");
   if (error) throw new Error(error.message);
 }
+
+// ── AI Bridge Diagnostic Actions ────────────────────────────
+
+export async function checkBridgeStatus(): Promise<{
+  online: boolean;
+  edgeRegion: string;
+  geminiCount: number;
+  groqConfigured: boolean;
+  latencyMs: number;
+  error?: string;
+}> {
+  const start = Date.now();
+  try {
+    const envKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "")
+      .split(",")
+      .map((k) => k.trim())
+      .filter(Boolean);
+    const hasGroq = Boolean(process.env.GROQ_API_KEY);
+
+    return {
+      online: true,
+      edgeRegion: process.env.VERCEL_REGION || "local",
+      geminiCount: envKeys.length,
+      groqConfigured: hasGroq,
+      latencyMs: Date.now() - start,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      online: false,
+      edgeRegion: "unknown",
+      geminiCount: 0,
+      groqConfigured: false,
+      latencyMs: Date.now() - start,
+      error: msg,
+    };
+  }
+}
+
+export async function testBridgePrompt(
+  prompt: string,
+  mode: string = "code"
+): Promise<{ success: boolean; text?: string; provider?: string; latencyMs: number; error?: string }> {
+  const start = Date.now();
+  const secret = process.env.APP_SECRET || "lockapp-secret-2026";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+
+  try {
+    const res = await fetch(`${appUrl}/api/bridge/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-app-secret": secret,
+      },
+      body: JSON.stringify({ prompt, mode }),
+      cache: "no-store",
+    });
+
+    const data = await res.json();
+    return {
+      success: Boolean(data.success),
+      text: data.text,
+      provider: data.provider,
+      latencyMs: Date.now() - start,
+      error: data.error,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      success: false,
+      latencyMs: Date.now() - start,
+      error: msg,
+    };
+  }
+}

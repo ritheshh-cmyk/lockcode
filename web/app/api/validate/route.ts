@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Parse body ──
-  let body: { reg_key?: string; machine_id?: string };
+  let body: { reg_key?: string; machine_id?: string; action?: string };
   try {
     body = await req.json();
   } catch {
@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
   // ── Sanitize inputs ──
   const reg_key = (body.reg_key ?? "").trim();
   const machine_id = (body.machine_id ?? "").trim();
+  const action = (body.action ?? "").trim().toLowerCase();
 
   // Edge case: empty strings must be treated as missing
   if (!reg_key || !machine_id) {
@@ -109,6 +110,17 @@ export async function POST(req: NextRequest) {
     language: license.language || "Java",
     model: license.model || "gemini",
   };
+
+  // ── Heartbeat Check (Zero side-effects) ──
+  if (action === "heartbeat" || action === "ping") {
+    if (license.machine_id && license.machine_id !== machine_id) {
+      return NextResponse.json(
+        { valid: false, message: "Machine mismatch on heartbeat" },
+        { status: 403 }
+      );
+    }
+    return NextResponse.json({ ...payload, message: "Heartbeat ACK", heartbeat: true });
+  }
 
   // ── First activation (machine_id is null or empty) ──
   if (!license.machine_id) {
