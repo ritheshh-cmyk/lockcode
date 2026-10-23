@@ -1,101 +1,127 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getActiveProviders, AIProviderRecord } from "@/lib/brain";
+import { sanitizePrompt } from "@/lib/sanitize";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 export const maxDuration = 60;
 
+/**
+ * Universal Streaming Gateway
+ * Dynamically resolves the highest-priority active provider in the Brain vault
+ * and pipes real-time SSE tokens to the TITAN desktop client.
+ */
 export async function POST(req: NextRequest) {
-  // Secret check
+  // 1. Secret authentication
   const appSecret = req.headers.get("x-app-secret");
   const expectedSecret = process.env.APP_SECRET || "lockapp-secret-2026";
   if (!appSecret || appSecret !== expectedSecret) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
-  let body: { prompt?: string; systemPrompt?: string; model?: string };
+  // 2. Parse request
+  let body: { prompt?: string; systemPrompt?: string; model?: string; regKey?: string; mode?: string };
   try {
     body = await req.json();
   } catch {
     return new NextResponse("Invalid JSON", { status: 400 });
   }
 
-  const userPrompt = (body.prompt || "").trim();
+  const userPrompt = sanitizePrompt((body.prompt || "").trim());
   if (!userPrompt) {
     return new NextResponse("Prompt is required", { status: 400 });
   }
 
-  const groqApiKey = (process.env.GROQ_API_KEY || "").trim();
-  const geminiKey = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "").split(",")[0]?.trim();
+  const systemPrompt = (body.systemPrompt || "").trim();
 
-  // If Groq is available, use OpenAI-compatible streaming
-  if (groqApiKey) {
+  // 3. Resolve active providers from Brain
+  const providers = await getActiveProviders();
+  if (providers.length === 0) {
+    return new NextResponse("No active AI providers configured in Brain", { status: 503 });
+  }
+
+  // 4. Attempt streaming across active providers in cascade order
+  for (const p of providers) {
     try {
-      const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${groqApiKey}`,
-        },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [
-            ...(body.systemPrompt ? [{ role: "system", content: body.systemPrompt }] : []),
-            { role: "user", content: userPrompt },
-          ],
-          stream: true,
-          temperature: 0.1,
-        }),
-      });
-
-      if (!groqRes.ok || !groqRes.body) {
-        return new NextResponse(`Groq Stream Error: ${groqRes.statusText}`, { status: groqRes.status });
+      const streamRes = await openProviderStream(p, userPrompt, systemPrompt, body.model);
+      if (streamRes && streamRes.body) {
+        return new NextResponse(streamRes.body as any, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
+            Connection: "keep-alive",
+            "X-Provider": p.provider,
+            "X-Model": p.model,
+          },
+        });
       }
-
-      return new NextResponse(groqRes.body, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache, no-transform",
-          Connection: "keep-alive",
-        },
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return new NextResponse(`Streaming error: ${msg}`, { status: 500 });
+    } catch {
+      // Continue to next provider in cascade
     }
   }
 
-  // If Gemini streaming is used
-  if (geminiKey) {
-    try {
-      const model = body.model || "gemini-2.0-flash";
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        model
-      )}:streamGenerateContent?alt=sse&key=${encodeURIComponent(geminiKey)}`;
+  return new NextResponse("All streaming providers failed or were unavailable", { status: 502 });
+}
 
-      const geminiRes = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-          ...(body.systemPrompt ? { systemInstruction: { parts: [{ text: body.systemPrompt }] } } : {}),
-        }),
-      });
+async function openProviderStream(
+  provider: AIProviderRecord,
+  prompt: string,
+  systemPrompt: string,
+  modelOverride?: string
+): Promise<Response | null> {
+  const model = modelOverride || provider.model;
 
-      if (!geminiRes.ok || !geminiRes.body) {
-        return new NextResponse(`Gemini Stream Error: ${geminiRes.statusText}`, { status: geminiRes.status });
-      }
+  // Gemini native SSE stream
+  if (provider.provider === "gemini") {
+    const primaryKey = provider.api_key.split(",")[0]?.trim();
+    if (!primaryKey) return null;
 
-      return new NextResponse(geminiRes.body, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache, no-transform",
-          Connection: "keep-alive",
-        },
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return new NextResponse(`Streaming error: ${msg}`, { status: 500 });
-    }
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      model
+    )}:streamGenerateContent?alt=sse&key=${encodeURIComponent(primaryKey)}`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        ...(systemPrompt ? { systemInstruction: { parts: [{ text: systemPrompt }] } } : {}),
+      }),
+    });
+
+    return res.ok && res.body ? res : null;
   }
 
-  return new NextResponse("No streaming provider available", { status: 503 });
+  // OpenAI-compatible SSE stream (Groq, DeepSeek, OpenAI, Anthropic via bridge, Custom, OpenRouter)
+  let endpoint = provider.base_url;
+  if (!endpoint) {
+    if (provider.provider === "groq") endpoint = "https://api.groq.com/openai/v1/chat/completions";
+    else if (provider.provider === "deepseek") endpoint = "https://api.deepseek.com/chat/completions";
+    else if (provider.provider === "openai") endpoint = "https://api.openai.com/v1/chat/completions";
+    else if (provider.provider === "openrouter") endpoint = "https://openrouter.ai/api/v1/chat/completions";
+    else endpoint = "https://api.openai.com/v1/chat/completions";
+  }
+
+  const primaryKey = provider.api_key.split(",")[0]?.trim();
+  if (!primaryKey) return null;
+
+  const messages: Array<{ role: string; content: string }> = [];
+  if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+  messages.push({ role: "user", content: prompt });
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${primaryKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: true,
+      temperature: 0.2,
+      max_tokens: 4096,
+    }),
+  });
+
+  return res.ok && res.body ? res : null;
 }

@@ -767,3 +767,109 @@ export async function updateProviderWeight(
   }
 }
 
+// ── Live Watchers & Telemetry Server Actions ────────────────────────────────
+
+export async function triggerHealthAudit(): Promise<{
+  success: boolean;
+  auditedCount: number;
+  healthyCount: number;
+  results: Array<{ id: string; label: string; healthy: boolean; latency_ms: number; error?: string }>;
+  error?: string;
+}> {
+  try {
+    const { testProviderConnection, invalidateProvidersCache } = await import("@/lib/brain");
+    const { data: providers, error } = await supabaseAdmin
+      .from("ai_providers")
+      .select("*")
+      .order("priority", { ascending: true });
+
+    if (error || !providers) return { success: false, auditedCount: 0, healthyCount: 0, results: [], error: error?.message };
+
+    const auditResults = await Promise.all(
+      providers.map(async (p) => {
+        const pingRes = await testProviderConnection(p);
+        const isHealthy = pingRes.success;
+
+        const updateData: Record<string, unknown> = {
+          last_latency_ms: pingRes.latency_ms,
+          last_error: isHealthy ? null : (pingRes.message || "Failed health ping").slice(0, 500),
+        };
+        if (!isHealthy) {
+          updateData.rate_limited_until = new Date(Date.now() + 45_000).toISOString();
+        } else if (p.rate_limited_until && new Date(p.rate_limited_until) <= new Date()) {
+          updateData.rate_limited_until = null;
+        }
+
+        await supabaseAdmin.from("ai_providers").update(updateData).eq("id", p.id);
+
+        return {
+          id: p.id,
+          label: p.label,
+          healthy: isHealthy,
+          latency_ms: pingRes.latency_ms,
+          error: isHealthy ? undefined : pingRes.message,
+        };
+      })
+    );
+
+    invalidateProvidersCache();
+    return {
+      success: true,
+      auditedCount: auditResults.length,
+      healthyCount: auditResults.filter((r) => r.healthy).length,
+      results: auditResults,
+    };
+  } catch (e: any) {
+    return { success: false, auditedCount: 0, healthyCount: 0, results: [], error: e?.message };
+  }
+}
+
+export async function getGlobalTelemetry(limit = 50): Promise<Array<any>> {
+  try {
+    const { getRecentSystemHistory } = await import("@/lib/history");
+    return await getRecentSystemHistory(limit);
+  } catch {
+    return [];
+  }
+}
+
+export async function getActiveClientPresence(): Promise<{
+  activeNow: string[];
+  activeToday: string[];
+  totalSeen: number;
+}> {
+  try {
+    const { getClientPresenceSummary } = await import("@/lib/watcher");
+    return getClientPresenceSummary();
+  } catch {
+    return { activeNow: [], activeToday: [], totalSeen: 0 };
+  }
+}
+
+export async function simulateChaosFailure(
+  providerId: string,
+  durationMs = 60_000
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const { triggerSimulatedFailure } = await import("@/lib/watcher");
+    triggerSimulatedFailure(providerId, durationMs);
+    return { success: true, message: `Simulated 429 outage active for ${Math.round(durationMs / 1000)}s` };
+  } catch (e: any) {
+    return { success: false, message: e?.message ?? "Failed to simulate outage" };
+  }
+}
+
+export async function clearProviderBackoff(providerId: string): Promise<{ success: boolean }> {
+  try {
+    await supabaseAdmin
+      .from("ai_providers")
+      .update({ rate_limited_until: null, last_error: null })
+      .eq("id", providerId);
+    const { invalidateProvidersCache } = await import("@/lib/brain");
+    invalidateProvidersCache();
+    return { success: true };
+  } catch {
+    return { success: false };
+  }
+}
+

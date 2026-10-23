@@ -9,6 +9,9 @@ import {
   pingTestProvider,
   getRoutingStrategy,
   saveRoutingStrategy,
+  triggerHealthAudit,
+  simulateChaosFailure,
+  clearProviderBackoff,
   type RoutingConfig,
 } from "../actions";
 
@@ -68,6 +71,36 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
   // Action Loading
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [auditing, setAuditing] = useState(false);
+  const [auditResultMsg, setAuditResultMsg] = useState("");
+  const [chaosTarget, setChaosTarget] = useState<string | null>(null);
+
+  const handleRunHealthAudit = async () => {
+    setAuditing(true);
+    setAuditResultMsg("");
+    const res = await triggerHealthAudit();
+    setAuditing(false);
+    if (res.success) {
+      setAuditResultMsg(`Audited ${res.auditedCount} providers: ${res.healthyCount} online`);
+      setTimeout(() => setAuditResultMsg(""), 3500);
+      onRefresh();
+    } else {
+      setAuditResultMsg(`Audit error: ${res.error || "Unknown"}`);
+      setTimeout(() => setAuditResultMsg(""), 3500);
+    }
+  };
+
+  const handleSimulateChaos = async (p: BrainProviderItem) => {
+    setChaosTarget(p.id);
+    await simulateChaosFailure(p.id, 45_000);
+    setTimeout(() => setChaosTarget(null), 45_000);
+    onRefresh();
+  };
+
+  const handleClearBackoff = async (p: BrainProviderItem) => {
+    await clearProviderBackoff(p.id);
+    onRefresh();
+  };
 
   const presets: Record<string, { label: string; model: string; baseUrl?: string; icon: string; color: string }> = {
     groq: {
@@ -348,10 +381,28 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
           </p>
         </div>
 
-        <div className="flex items-center space-x-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          {auditResultMsg && (
+            <span className="text-xs text-emerald-400 font-medium px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+              {auditResultMsg}
+            </span>
+          )}
+
+          <button
+            onClick={handleRunHealthAudit}
+            disabled={auditing}
+            className="apple-btn-secondary px-3.5 py-2 text-xs font-medium flex items-center space-x-1.5 disabled:opacity-50"
+            title="Concurrently ping all active providers to test live latency"
+          >
+            <span className={`material-symbols-outlined text-[16px] ${auditing ? "animate-spin text-[#0a84ff]" : "text-emerald-400"}`}>
+              {auditing ? "progress_activity" : "health_and_safety"}
+            </span>
+            <span>{auditing ? "Auditing..." : "Live Health Audit"}</span>
+          </button>
+
           <button
             onClick={onRefresh}
-            className="apple-btn-secondary px-3.5 py-2 text-xs font-medium flex items-center space-x-1.5"
+            className="apple-btn-secondary px-3 py-2 text-xs font-medium flex items-center space-x-1"
             title="Refresh Providers"
           >
             <span className="material-symbols-outlined text-[16px]">refresh</span>
@@ -610,6 +661,31 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
                         ⚡ {p.last_latency_ms}ms
                       </span>
                     )}
+
+                    {/* Circuit Breaker Status */}
+                    {p.rate_limited_until && new Date(p.rate_limited_until) > new Date() && (
+                      <div className="flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-[11px] font-medium">
+                        <span className="material-symbols-outlined text-[13px]">warning</span>
+                        <span>Backoff (429)</span>
+                        <button
+                          onClick={() => handleClearBackoff(p)}
+                          className="ml-1 underline hover:text-white"
+                          title="Clear backoff and re-enable immediately"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Chaos Outage Simulation Button */}
+                    <button
+                      onClick={() => handleSimulateChaos(p)}
+                      disabled={chaosTarget === p.id}
+                      className="px-2 py-1.5 rounded-xl bg-white/[0.04] hover:bg-red-500/10 border border-white/[0.06] hover:border-red-500/20 text-[11px] text-[#86868b] hover:text-red-400 transition-colors disabled:opacity-50"
+                      title="Simulate a 45s outage to test automatic cascade failover live"
+                    >
+                      {chaosTarget === p.id ? "429 Mocked" : "Test Failover"}
+                    </button>
 
                     {/* Ping Test Button */}
                     <button

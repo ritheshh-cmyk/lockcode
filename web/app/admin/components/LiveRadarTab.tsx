@@ -17,7 +17,7 @@ interface LiveEvent {
   message?: string;
 }
 
-const MAX_EVENTS = 60;
+const MAX_EVENTS = 80;
 
 const modeColor: Record<string, string> = {
   code: "#30d158",
@@ -38,14 +38,46 @@ const providerIcon: Record<string, string> = {
   custom: "◌",
 };
 
+// Subtle Web Audio API chime synthesizer (macOS inspired pop sound)
+function playRadarChime() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
+    osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.08); // E6
+
+    gain.gain.setValueAtTime(0.04, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.12);
+  } catch {
+    // Ignore audio permission errors
+  }
+}
+
 export function LiveRadarTab() {
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [stats, setStats] = useState({ total: 0, success: 0, errors: 0, avgLatency: 0 });
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [filterMode, setFilterMode] = useState<string>("all");
+  const [isHovered, setIsHovered] = useState(false);
+
   const esRef = useRef<EventSource | null>(null);
   const latencySumRef = useRef(0);
   const latencyCountRef = useRef(0);
+  const soundRef = useRef(soundEnabled);
+  soundRef.current = soundEnabled;
 
   const connect = useCallback(() => {
     if (esRef.current) {
@@ -65,6 +97,10 @@ export function LiveRadarTab() {
       try {
         const event: LiveEvent = JSON.parse(e.data);
         if (event.type === "connected") return;
+
+        if (soundRef.current) {
+          playRadarChime();
+        }
 
         setEvents((prev) => [event, ...prev].slice(0, MAX_EVENTS));
 
@@ -113,6 +149,14 @@ export function LiveRadarTab() {
     latencyCountRef.current = 0;
   };
 
+  const filteredEvents = events.filter((ev) => {
+    if (filterMode === "all") return true;
+    if (filterMode === "code") return ev.mode === "code";
+    if (filterMode === "mcq") return ev.mode === "mcq";
+    if (filterMode === "faults") return ev.success === false;
+    return true;
+  });
+
   const formatTime = (ts: string) => {
     return new Date(ts).toLocaleTimeString("en-US", {
       hour12: false,
@@ -124,7 +168,7 @@ export function LiveRadarTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      {/* Header Bar */}
+      {/* Top Header Bar */}
       <div
         style={{
           display: "flex",
@@ -136,6 +180,8 @@ export function LiveRadarTab() {
           WebkitBackdropFilter: "blur(20px)",
           borderRadius: "14px",
           border: "1px solid rgba(255,255,255,0.08)",
+          flexWrap: "wrap",
+          gap: "10px",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -163,7 +209,29 @@ export function LiveRadarTab() {
               : "Disconnected"}
           </span>
         </div>
+
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          {/* Audio Chime Toggle */}
+          <button
+            onClick={() => setSoundEnabled((prev) => !prev)}
+            style={{
+              background: soundEnabled ? "rgba(10,132,255,0.2)" : "rgba(255,255,255,0.06)",
+              border: soundEnabled ? "1px solid rgba(10,132,255,0.4)" : "1px solid rgba(255,255,255,0.08)",
+              borderRadius: "8px",
+              color: soundEnabled ? "#0a84ff" : "#86868b",
+              padding: "6px 12px",
+              fontSize: 12,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              fontWeight: 500,
+            }}
+            title="Play sound on new event"
+          >
+            <span>{soundEnabled ? "🔔 Chime: ON" : "🔕 Chime: OFF"}</span>
+          </button>
+
           <button
             onClick={clearEvents}
             style={{
@@ -179,6 +247,7 @@ export function LiveRadarTab() {
           >
             Clear Log
           </button>
+
           {!connected && (
             <button
               onClick={connect}
@@ -201,7 +270,7 @@ export function LiveRadarTab() {
       </div>
 
       {/* Metric Cards Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "12px" }}>
         {[
           { label: "Live Requests", value: stats.total, color: "#0a84ff" },
           { label: "Successful", value: stats.success, color: "#30d158" },
@@ -247,14 +316,49 @@ export function LiveRadarTab() {
         ))}
       </div>
 
+      {/* Filter Row */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+        <div style={{ display: "flex", gap: "4px", padding: "3px", borderRadius: "10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          {[
+            { id: "all", label: "All Events" },
+            { id: "code", label: "Code Queries" },
+            { id: "mcq", label: "MCQ Queries" },
+            { id: "faults", label: "Faults Only" },
+          ].map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setFilterMode(f.id)}
+              style={{
+                background: filterMode === f.id ? "rgba(255,255,255,0.15)" : "transparent",
+                color: filterMode === f.id ? "#fff" : "#86868b",
+                border: "none",
+                borderRadius: "7px",
+                padding: "4px 12px",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: "11px", color: "#636366" }}>
+          {isHovered ? "⏸ Scroll frozen (inspecting)" : "▶ Auto-streaming latest"}
+        </div>
+      </div>
+
       {/* Event Stream Container */}
       <div
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
         style={{
           background: "rgba(10,10,12,0.6)",
           borderRadius: "14px",
           border: "1px solid rgba(255,255,255,0.08)",
           overflow: "hidden",
-          maxHeight: "500px",
+          maxHeight: "520px",
           display: "flex",
           flexDirection: "column",
         }}
@@ -274,11 +378,11 @@ export function LiveRadarTab() {
           }}
         >
           <span>Real-Time Activity Stream</span>
-          <span>{events.length} events logged</span>
+          <span>{filteredEvents.length} events displayed</span>
         </div>
 
         <div style={{ overflowY: "auto", flex: 1 }}>
-          {events.length === 0 ? (
+          {filteredEvents.length === 0 ? (
             <div
               style={{
                 padding: "60px 24px",
@@ -295,7 +399,7 @@ export function LiveRadarTab() {
               </div>
             </div>
           ) : (
-            events.map((event, idx) => (
+            filteredEvents.map((event, idx) => (
               <div
                 key={event.id || idx}
                 style={{
@@ -397,6 +501,12 @@ export function LiveRadarTab() {
                       </span>
                     )}
                   </div>
+
+                  {event.message && (
+                    <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 4 }}>
+                      {event.message}
+                    </div>
+                  )}
 
                   {event.error && (
                     <div
