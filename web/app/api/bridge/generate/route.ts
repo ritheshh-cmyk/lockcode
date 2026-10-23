@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Normalize prompt and system instruction from either simplified or raw Gemini format
-  let userPrompt = (body.prompt || "").trim();
+  let userPrompt = (body.prompt || (body as any).question || "").trim();
   let systemPrompt = (body.systemPrompt || "").trim();
 
   if (!userPrompt && body.contents) {
