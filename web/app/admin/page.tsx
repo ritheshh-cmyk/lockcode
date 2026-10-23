@@ -224,7 +224,7 @@ export default function AdminControlCenter() {
           )}
 
           {activeTab === "simulator" && (
-            <PlaygroundTab />
+            <PlaygroundTab licenses={licenses} />
           )}
 
           {activeTab === "specs" && (

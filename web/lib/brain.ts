@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { logRequestHistory, estimateTokens } from "@/lib/history";
 import { sanitizePrompt, sanitizeCodeResponse } from "@/lib/sanitize";
 import { broadcastEvent, createEventId } from "@/lib/events";
+import { touchClientActivity, isSimulatedFailure } from "@/lib/watcher";
 
 export interface AIProviderRecord {
   id: string;
@@ -516,6 +517,9 @@ export async function executeBrainQuery(params: {
   const mode = (params.mode || "code").toLowerCase();
   const regKey = (params.regKey || "anonymous").trim();
 
+  // Track live client presence
+  touchClientActivity(regKey);
+
   // Mode-specific system instructions
   if (!systemPrompt) {
     if (mode === "mcq") {
@@ -539,6 +543,17 @@ export async function executeBrainQuery(params: {
   const now = new Date();
 
   for (const provider of orderedProviders) {
+    // Chaos test simulation: test automatic failover
+    if (isSimulatedFailure(provider.id)) {
+      failoverHistory.push({
+        provider: provider.provider,
+        model: provider.model,
+        error: "Simulated Chaos Outage (HTTP 429) - Automatic failover engaged",
+        status: 429,
+      });
+      continue;
+    }
+
     // Circuit breaker: skip if provider is currently in rate-limit backoff
     if (provider.rate_limited_until) {
       const backoffUntil = new Date(provider.rate_limited_until);

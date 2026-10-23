@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   License,
   createLicense,
@@ -8,6 +8,7 @@ import {
   resetLicense,
   deleteLicense,
   updateLicense,
+  getActiveClientPresence,
 } from "../actions";
 import { BulkLicenseModal } from "./BulkLicenseModal";
 
@@ -30,6 +31,31 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Live client presence state
+  const [presence, setPresence] = useState<{ activeNow: string[]; activeToday: string[]; totalSeen: number }>({
+    activeNow: [],
+    activeToday: [],
+    totalSeen: 0,
+  });
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchPresence = async () => {
+      try {
+        const p = await getActiveClientPresence();
+        if (mounted) setPresence(p);
+      } catch {
+        // silent
+      }
+    };
+    fetchPresence();
+    const iv = setInterval(fetchPresence, 10_000);
+    return () => {
+      mounted = false;
+      clearInterval(iv);
+    };
+  }, []);
 
   const now = new Date();
 
@@ -132,7 +158,7 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
   return (
     <div className="space-y-8">
       {/* ── 1. Bento Stats ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         <div className="apple-glass-card rounded-2xl p-4 sm:p-5">
           <div className="text-[11px] font-medium text-[#86868b]">Total Registered</div>
           <div className="text-2xl font-bold tracking-tight text-white font-mono mt-1">
@@ -141,9 +167,19 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
         </div>
 
         <div className="apple-glass-card rounded-2xl p-4 sm:p-5">
-          <div className="text-[11px] font-medium text-emerald-400">Active Now</div>
+          <div className="text-[11px] font-medium text-emerald-400">Valid Licenses</div>
           <div className="text-2xl font-bold tracking-tight text-emerald-400 font-mono mt-1">
             {activeLicenses.length}
+          </div>
+        </div>
+
+        <div className="apple-glass-card rounded-2xl p-4 sm:p-5 border border-emerald-500/20 bg-emerald-500/[0.04]">
+          <div className="flex items-center space-x-1.5 text-[11px] font-medium text-emerald-300">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            <span>Live Presence (5m)</span>
+          </div>
+          <div className="text-2xl font-bold tracking-tight text-emerald-400 font-mono mt-1">
+            {presence.activeNow.length} <span className="text-xs text-white/50 font-normal">online</span>
           </div>
         </div>
 
@@ -238,6 +274,7 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
                 {filteredLicenses.map((l) => {
                   const expiryDate = new Date(l.expires_at);
                   const isExpired = expiryDate <= now;
+                  const isOnline = presence.activeNow.includes(l.reg_key);
                   const msRemaining = expiryDate.getTime() - now.getTime();
                   const hoursRemaining = Math.max(0, Math.floor(msRemaining / (1000 * 3600)));
                   const daysRemaining = Math.floor(hoursRemaining / 24);
@@ -270,6 +307,15 @@ export function LicensesTab({ licenses, onRefresh }: LicensesTabProps) {
                           <span className="font-mono text-sm font-bold tracking-wider text-white px-2 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.08]">
                             {l.reg_key}
                           </span>
+                          {isOnline && (
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold border border-emerald-500/30 animate-pulse"
+                              title="Active in the last 5 minutes"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                              LIVE
+                            </span>
+                          )}
                           <button
                             onClick={() => handleCopy(l.reg_key)}
                             className="p-1 rounded-lg text-[#86868b] hover:text-white hover:bg-white/[0.06] transition-colors"
