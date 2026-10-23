@@ -516,3 +516,127 @@ export async function testBridgePrompt(
     };
   }
 }
+
+export interface BrainProviderItem {
+  id: string;
+  provider: string;
+  label: string;
+  api_key: string;
+  model: string;
+  base_url: string | null;
+  priority: number;
+  is_active: boolean;
+  rate_limited_until: string | null;
+  last_error: string | null;
+  last_latency_ms: number;
+  total_calls: number;
+  successful_calls: number;
+  created_at: string;
+}
+
+export async function getBrainProviders(): Promise<BrainProviderItem[]> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("ai_providers")
+      .select("*")
+      .order("priority", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (error || !data) return [];
+    return data as BrainProviderItem[];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveBrainProvider(provider: {
+  id?: string;
+  provider: string;
+  label: string;
+  api_key: string;
+  model: string;
+  base_url?: string;
+  priority?: number;
+  is_active?: boolean;
+}): Promise<{ success: boolean; error?: string; provider?: BrainProviderItem }> {
+  try {
+    if (provider.id) {
+      const { data, error } = await supabaseAdmin
+        .from("ai_providers")
+        .update({
+          provider: provider.provider.toLowerCase().trim(),
+          label: provider.label.trim(),
+          api_key: provider.api_key.trim(),
+          model: provider.model.trim(),
+          base_url: provider.base_url?.trim() || null,
+          priority: provider.priority ?? 1,
+          is_active: provider.is_active ?? true,
+        })
+        .eq("id", provider.id)
+        .select()
+        .single();
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, provider: data as BrainProviderItem };
+    } else {
+      const { data, error } = await supabaseAdmin
+        .from("ai_providers")
+        .insert({
+          provider: provider.provider.toLowerCase().trim(),
+          label: (provider.label || `${provider.provider} Provider`).trim(),
+          api_key: provider.api_key.trim(),
+          model: provider.model.trim(),
+          base_url: provider.base_url?.trim() || null,
+          priority: provider.priority ?? 1,
+          is_active: provider.is_active ?? true,
+        })
+        .select()
+        .single();
+
+      if (error) return { success: false, error: error.message };
+      return { success: true, provider: data as BrainProviderItem };
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+export async function toggleBrainProvider(id: string, is_active: boolean): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await supabaseAdmin
+      .from("ai_providers")
+      .update({ is_active })
+      .eq("id", id);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+export async function deleteBrainProvider(id: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await supabaseAdmin
+      .from("ai_providers")
+      .delete()
+      .eq("id", id);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
+}
+
+export async function pingTestProvider(provider: {
+  provider: string;
+  api_key: string;
+  model: string;
+  base_url?: string;
+}): Promise<{ success: boolean; latency_ms: number; message?: string }> {
+  const { testProviderConnection } = await import("@/lib/brain");
+  return testProviderConnection(provider);
+}
+
