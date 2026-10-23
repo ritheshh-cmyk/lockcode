@@ -97,33 +97,40 @@ export function BulkLicenseModal({ onClose, onSuccess, providers = [] }: BulkLic
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,0.75)",
-        backdropFilter: "blur(16px)",
-        WebkitBackdropFilter: "blur(16px)",
+        background: "rgba(0,0,0,0.8)",
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         zIndex: 1000,
+        padding: "16px",
+        overflowY: "auto",
       }}
     >
       <div
         className="ios-modal-enter"
         style={{
           background: "#1c1c1e",
-          borderRadius: "18px",
+          borderRadius: "24px",
           border: "1px solid rgba(255,255,255,0.14)",
-          padding: "28px",
+          padding: "24px",
           width: "100%",
           maxWidth: 480,
-          boxShadow: "0 24px 80px rgba(0,0,0,0.7)",
+          maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
+          boxShadow: "0 24px 80px rgba(0,0,0,0.8)",
+          margin: "auto",
+          overflow: "hidden",
         }}
       >
         {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexShrink: 0 }}>
           <div>
             <div
               style={{
-                fontSize: 18,
+                fontSize: 17,
                 fontWeight: 700,
                 color: "#e5e5ea",
                 fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif",
@@ -131,7 +138,7 @@ export function BulkLicenseModal({ onClose, onSuccess, providers = [] }: BulkLic
             >
               Bulk License Generator
             </div>
-            <div style={{ fontSize: 13, color: "#8e8e93", marginTop: 2 }}>
+            <div style={{ fontSize: 12, color: "#8e8e93", marginTop: 2 }}>
               Generate batches of 8-digit hardware-bound vouchers
             </div>
           </div>
@@ -156,8 +163,8 @@ export function BulkLicenseModal({ onClose, onSuccess, providers = [] }: BulkLic
         </div>
 
         {!result ? (
-          <>
-            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "14px", overflowY: "auto", flex: 1, paddingRight: 4, paddingBottom: 16 }}>
               <div>
                 <div style={labelStyle}>Number of Keys to Mint</div>
                 <input
@@ -215,7 +222,6 @@ export function BulkLicenseModal({ onClose, onSuccess, providers = [] }: BulkLic
                   )}
                 </select>
               </div>
-            </div>
 
             {error && (
               <div
@@ -231,8 +237,10 @@ export function BulkLicenseModal({ onClose, onSuccess, providers = [] }: BulkLic
                 {error}
               </div>
             )}
+            </div>
 
-            <div style={{ display: "flex", gap: "10px", marginTop: "22px" }}>
+            {/* Pinned Footer */}
+            <div style={{ display: "flex", gap: "10px", marginTop: "16px", paddingTop: "14px", borderTop: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
               <button
                 onClick={onClose}
                 style={{
@@ -268,7 +276,7 @@ export function BulkLicenseModal({ onClose, onSuccess, providers = [] }: BulkLic
                 {loading ? `Minting ${count} Keys...` : `Mint ${count} Keys`}
               </button>
             </div>
-          </>
+          </div>
         ) : (
           <>
             <div style={{ textAlign: "center", marginBottom: 20 }}>

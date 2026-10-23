@@ -203,7 +203,7 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
       </div>
 
       {/* ── 2. Filter & Actions Bar ── */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pb-2 border-b border-white/[0.08]">
+      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 pb-2 border-b border-white/[0.08]">
         {/* Search */}
         <div className="relative flex-1 max-w-sm">
           <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-[#86868b]">
@@ -218,7 +218,7 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
           />
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Cupertino Segmented Filter */}
           <div className="p-1 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center space-x-1 text-xs">
             {(["all", "active", "expired", "revoked"] as const).map((tab) => (
@@ -238,7 +238,7 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
 
           <button
             onClick={() => setBulkModalOpen(true)}
-            className="apple-btn-secondary px-3.5 py-2 text-xs font-semibold flex items-center space-x-1.5 whitespace-nowrap"
+            className="apple-btn-secondary px-3.5 py-2 text-xs font-semibold flex items-center space-x-1.5 whitespace-nowrap ios-press"
           >
             <span className="material-symbols-outlined text-[18px]">layers</span>
             <span>Bulk Mint</span>
@@ -246,7 +246,7 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
 
           <button
             onClick={handleOpenAddModal}
-            className="apple-btn-primary px-4 py-2 text-xs font-semibold flex items-center space-x-1.5 whitespace-nowrap shadow-lg shadow-[#0a84ff]/20"
+            className="apple-btn-primary px-4 py-2 text-xs font-semibold flex items-center space-x-1.5 whitespace-nowrap shadow-lg shadow-[#0a84ff]/20 ios-press"
           >
             <span className="material-symbols-outlined text-[18px]">add</span>
             <span>New License</span>
@@ -442,151 +442,168 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
 
       {/* ── 4. Add License Modal ── */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-fade-in">
-          <div className="relative w-full max-w-md rounded-3xl bg-[#1c1c1e]/90 border border-white/[0.12] shadow-2xl p-6 sm:p-8 backdrop-blur-2xl ios-modal-enter">
-            <div className="flex items-center justify-between pb-4 border-b border-white/[0.08] mb-6">
-              <h3 className="text-base font-semibold text-white tracking-tight">
-                Create Client License
-              </h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-2xl animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-w-md max-h-[90vh] flex flex-col rounded-3xl bg-[#1c1c1e] border border-white/[0.14] shadow-2xl shadow-black/90 backdrop-blur-3xl ios-modal-enter my-auto overflow-hidden">
+            {/* Pinned Header */}
+            <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-white/[0.08] bg-white/[0.02]">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[18px]">vpn_key</span>
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-semibold text-white tracking-tight">
+                    Create Client License
+                  </h3>
+                  <p className="text-[11px] text-[#86868b]">Provision new 8-digit hardware-locked key.</p>
+                </div>
+              </div>
               <button
+                type="button"
                 onClick={() => setModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.1] text-[#86868b] hover:text-white flex items-center justify-center transition-colors"
+                className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#86868b] hover:text-white flex items-center justify-center transition-colors ios-press-subtle"
+                title="Close dialog"
               >
                 <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
 
-            <form onSubmit={handleCreate} className="space-y-4">
-              {/* Key Input with Randomize */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-medium text-[#86868b]">
-                    8-Digit Registration Key
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleGenerateRandomKey}
-                    className="text-[11px] text-[#0a84ff] hover:underline"
-                  >
-                    Regenerate Key
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  maxLength={8}
-                  value={customKey}
-                  onChange={(e) => setCustomKey(e.target.value.replace(/\D/g, ""))}
-                  placeholder="8-digit number"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-sm font-mono font-bold tracking-widest text-white focus:outline-none focus:border-[#0a84ff]"
-                  required
-                />
-              </div>
-
-              {/* Duration */}
-              <div>
-                <label className="block text-xs font-medium text-[#86868b] mb-1.5">
-                  Validity Duration
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { label: "24 Hours", days: 1 },
-                    { label: "7 Days", days: 7 },
-                    { label: "30 Days", days: 30 },
-                  ].map((d) => (
+            <form onSubmit={handleCreate} className="flex flex-col flex-1 overflow-hidden min-h-0">
+              {/* Scrollable Form Body */}
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4 smooth-touch-scroll">
+                {/* Key Input with Randomize */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-medium text-[#86868b]">
+                      8-Digit Registration Key
+                    </label>
                     <button
-                      key={d.days}
                       type="button"
-                      onClick={() => setDurationDays(d.days)}
-                      className={`py-2 rounded-xl border text-xs font-medium transition-all ${
-                        durationDays === d.days
-                          ? "bg-white/[0.15] border-white/30 text-white shadow-sm"
-                          : "bg-white/[0.04] border-white/[0.06] text-[#86868b]"
-                      }`}
+                      onClick={handleGenerateRandomKey}
+                      className="text-[11px] text-[#0a84ff] hover:underline flex items-center space-x-1"
                     >
-                      {d.label}
+                      <span className="material-symbols-outlined text-[14px]">casino</span>
+                      <span>Generate Random</span>
                     </button>
-                  ))}
+                  </div>
+                  <input
+                    type="text"
+                    maxLength={8}
+                    value={customKey}
+                    onChange={(e) => setCustomKey(e.target.value.replace(/\D/g, ""))}
+                    placeholder="8-digit number"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-sm font-mono font-bold tracking-widest text-white focus:outline-none focus:border-[#0a84ff]"
+                    required
+                  />
                 </div>
-              </div>
 
-              {/* Language */}
-              <div>
-                <label className="block text-xs font-medium text-[#86868b] mb-1.5">
-                  Default Language
-                </label>
-                <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
-                >
-                  <option value="Java" className="bg-[#1c1c1e]">Java</option>
-                  <option value="Python" className="bg-[#1c1c1e]">Python</option>
-                  <option value="C++" className="bg-[#1c1c1e]">C++</option>
-                  <option value="C#" className="bg-[#1c1c1e]">C#</option>
-                  <option value="JavaScript" className="bg-[#1c1c1e]">JavaScript</option>
-                </select>
-              </div>
-
-              {/* Allotted AI Provider */}
-              <div>
-                <label className="block text-xs font-medium text-[#86868b] mb-1.5">
-                  Allotted AI Provider / Policy
-                </label>
-                <select
-                  value={allottedModel}
-                  onChange={(e) => setAllottedModel(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
-                >
-                  <option value="all" className="bg-[#1c1c1e]">✦ Auto (All Providers / Brain Cascade)</option>
-                  <option value="gemini" className="bg-[#1c1c1e]">Gemini Pool Only</option>
-                  <option value="groq" className="bg-[#1c1c1e]">Groq Only (⚡ Llama-3.3)</option>
-                  <option value="openai" className="bg-[#1c1c1e]">OpenAI Only</option>
-                  <option value="deepseek" className="bg-[#1c1c1e]">DeepSeek Only</option>
-                  <option value="anthropic" className="bg-[#1c1c1e]">Anthropic Only</option>
-                  {providers && providers.length > 0 && (
-                    <optgroup label="Specific Pinned Providers" className="bg-[#1c1c1e] text-white/50">
-                      {providers.map((p) => (
-                        <option key={p.id} value={p.id} className="bg-[#1c1c1e]">
-                          Pinned: {p.label} ({p.model})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              </div>
-
-              {/* Label */}
-              <div>
-                <label className="block text-xs font-medium text-[#86868b] mb-1.5">
-                  User Note / Customer Name <span className="text-white/40">(Optional)</span>
-                </label>
-                <input
-                  type="text"
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  placeholder="e.g. John Doe / Room 402"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff]"
-                />
-              </div>
-
-              {errorMsg && (
-                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400">
-                  {errorMsg}
+                {/* Duration */}
+                <div>
+                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                    Validity Duration
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { label: "24 Hours", days: 1 },
+                      { label: "7 Days", days: 7 },
+                      { label: "30 Days", days: 30 },
+                    ].map((d) => (
+                      <button
+                        key={d.days}
+                        type="button"
+                        onClick={() => setDurationDays(d.days)}
+                        className={`py-2 rounded-xl border text-xs font-medium transition-all ios-press-subtle ${
+                          durationDays === d.days
+                            ? "bg-white/[0.18] border-white/30 text-white shadow-sm"
+                            : "bg-white/[0.04] border-white/[0.06] text-[#86868b] hover:text-white hover:bg-white/[0.08]"
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              )}
 
-              <div className="flex items-center justify-end space-x-2 pt-4 border-t border-white/[0.08]">
+                {/* Language */}
+                <div>
+                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                    Default Language
+                  </label>
+                  <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
+                  >
+                    <option value="Java" className="bg-[#1c1c1e]">Java</option>
+                    <option value="Python" className="bg-[#1c1c1e]">Python</option>
+                    <option value="C++" className="bg-[#1c1c1e]">C++</option>
+                    <option value="C#" className="bg-[#1c1c1e]">C#</option>
+                    <option value="JavaScript" className="bg-[#1c1c1e]">JavaScript</option>
+                  </select>
+                </div>
+
+                {/* Allotted AI Provider */}
+                <div>
+                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                    Allotted AI Provider / Policy
+                  </label>
+                  <select
+                    value={allottedModel}
+                    onChange={(e) => setAllottedModel(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
+                  >
+                    <option value="all" className="bg-[#1c1c1e]">✦ Auto (All Providers / Brain Cascade)</option>
+                    <option value="gemini" className="bg-[#1c1c1e]">Gemini Pool Only</option>
+                    <option value="groq" className="bg-[#1c1c1e]">Groq Only (⚡ Llama-3.3)</option>
+                    <option value="openai" className="bg-[#1c1c1e]">OpenAI Only</option>
+                    <option value="deepseek" className="bg-[#1c1c1e]">DeepSeek Only</option>
+                    <option value="anthropic" className="bg-[#1c1c1e]">Anthropic Only</option>
+                    {providers && providers.length > 0 && (
+                      <optgroup label="Specific Pinned Providers" className="bg-[#1c1c1e] text-white/50">
+                        {providers.map((p) => (
+                          <option key={p.id} value={p.id} className="bg-[#1c1c1e]">
+                            Pinned: {p.label} ({p.model})
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+
+                {/* Label */}
+                <div>
+                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                    User Note / Customer Name <span className="text-white/40">(Optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    placeholder="e.g. John Doe / Room 402"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff]"
+                  />
+                </div>
+
+                {errorMsg && (
+                  <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400 flex items-center space-x-2">
+                    <span className="material-symbols-outlined text-[16px]">error</span>
+                    <span>{errorMsg}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Pinned Footer */}
+              <div className="shrink-0 flex items-center justify-end space-x-2 px-6 py-4 border-t border-white/[0.08] bg-[#161618] backdrop-blur-md">
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="apple-btn-secondary px-4 py-2 text-xs font-medium"
+                  className="apple-btn-secondary px-4 py-2 text-xs font-medium ios-press"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="apple-btn-primary px-5 py-2 text-xs font-semibold flex items-center space-x-1.5 disabled:opacity-50"
+                  className="apple-btn-primary px-5 py-2 text-xs font-semibold flex items-center space-x-1.5 disabled:opacity-50 ios-press"
                 >
                   {saving && <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>}
                   <span>Create License</span>
