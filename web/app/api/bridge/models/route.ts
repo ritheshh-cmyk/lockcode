@@ -1,54 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getActiveProviders } from "@/lib/brain";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
-  const models = [
-    {
-      id: "gemini-2.5-flash",
-      name: "Google Gemini 2.5 Flash",
-      provider: "gemini",
-      tier: "primary",
-      recommended_for: ["complex_code", "debugging", "general_mcq"],
-      context_window: 1000000,
-      supports_json_mode: true,
-    },
-    {
-      id: "gemini-2.0-flash",
-      name: "Google Gemini 2.0 Flash",
-      provider: "gemini",
-      tier: "fast",
-      recommended_for: ["rapid_mcq", "syntax_formatting"],
-      context_window: 1000000,
-      supports_json_mode: true,
-    },
-    {
-      id: "gemini-1.5-flash",
-      name: "Google Gemini 1.5 Flash",
-      provider: "gemini",
-      tier: "legacy_backup",
-      recommended_for: ["fallback"],
-      context_window: 1000000,
-      supports_json_mode: true,
-    },
-    {
-      id: "llama-3.3-70b-versatile",
-      name: "Meta Llama 3.3 70B (Groq LPU)",
-      provider: "groq",
-      tier: "emergency_fallback",
-      recommended_for: ["zero_quota_failover", "ultra_low_latency"],
-      speed_tokens_per_sec: 300,
-      context_window: 128000,
-      supports_json_mode: true,
-    },
-  ];
+  try {
+    const activeProviders = await getActiveProviders();
+    const dynamicModels = activeProviders.map((p) => ({
+      id: p.model,
+      provider_id: p.id,
+      name: p.label,
+      provider: p.provider,
+      priority: p.priority,
+      weight: p.weight ?? 50,
+      preferred_for: p.preferred_for ?? "any",
+      last_latency_ms: p.last_latency_ms,
+      is_active: p.is_active,
+    }));
 
-  return NextResponse.json({
-    success: true,
-    active_default: "gemini-2.5-flash",
-    fallback_provider: "groq",
-    models,
-    count: models.length,
-    timestamp: new Date().toISOString(),
-  });
+    return NextResponse.json({
+      success: true,
+      count: dynamicModels.length,
+      active_default: dynamicModels[0]?.id || "gemini-2.5-flash",
+      models: dynamicModels,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err?.message }, { status: 500 });
+  }
 }
