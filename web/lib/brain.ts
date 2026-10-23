@@ -466,19 +466,23 @@ export async function executeBrainQuery(params: {
       // Asynchronously update provider metrics
       recordProviderMetrics(provider.id, providerLatency, true);
 
-      // Asynchronously record request history (rolling 10 items per user)
-      logRequestHistory({
-        reg_key: regKey,
-        mode,
-        prompt,
-        response: cleanText,
-        provider: provider.provider,
-        model: provider.model,
-        latency_ms: totalLatency,
-        promptTokens: pTokens,
-        completionTokens: cTokens,
-        status: "success",
-      }).catch(() => {});
+      // Record request history (rolling 10 items per user)
+      try {
+        await logRequestHistory({
+          reg_key: regKey,
+          mode,
+          prompt,
+          response: cleanText,
+          provider: provider.provider,
+          model: provider.model,
+          latency_ms: totalLatency,
+          promptTokens: pTokens,
+          completionTokens: cTokens,
+          status: "success",
+        });
+      } catch (err) {
+        console.error("Error logging request history:", err);
+      }
 
       return {
         success: true,
