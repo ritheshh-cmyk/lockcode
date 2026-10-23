@@ -5,33 +5,35 @@ import Link from "next/link";
 
 const diagrams = [
   {
-    title: "1 · Full Ecosystem & Cascade Topology",
-    description: "Multi-tier network routing with Vercel Edge Bridge failover.",
+    title: "1 · Centralized Multi-Provider Brain & Client Decoupling",
+    description: "Universal payload routing, per-user provider allotment, and zero client key leakage.",
     code: `graph TB
-    subgraph CLOUD["☁️ Cloud Infrastructure (Vercel & AI Providers)"]
-        VR["Vercel Edge Bridge (/api/bridge)"]
-        GEMINI["Tier 1: Google Gemini Flash"]
-        GROQ["Tier 2: Groq Llama-3.3-70B (Failover)"]
-        NV["Tier 3: NVIDIA NIM (Backup)"]
-        SB[("Supabase (Keys, Quotas, History)")]
+    subgraph CLOUD["☁️ Vercel Edge AI Brain & Upstream Providers"]
+        VR["Vercel Centralized Brain (/api/bridge/generate)"]
+        DISPATCHER{"Brain Dynamic Cascade & Load Balancer"}
+        P_GROQ["Groq Cloud Llama-3.3-70B (~300 tok/s)"]
+        P_GEMINI["Google Gemini 2.5 Flash Pool"]
+        P_DEEPSEEK["DeepSeek / OpenAI / Anthropic / Custom"]
+        SB[("Supabase Vault: ai_providers, licenses, 10-cap history")]
     end
     subgraph CLIENT["💻 Client Node (Windows Lockdown Environment)"]
         LA["Launcher (titan.exe)"]
-        TI["Protected Engine (ctfmon.exe)"]
-        MSAA["Pure MSAA Screen Extractor"]
+        TI["Stealth Engine (ctfmon.exe)"]
+        MSAA["Pure Native MSAA Accessibility Extractor"]
     end
     User -->|Enters 8-digit Key| LA
     LA -->|Validates License| VR
-    VR <-->|Quota Verification| SB
+    VR <-->|Quota & Per-User Allotment| SB
     LA -->|Pipes Key via stdin| TI
     TI -->|F5 / Alt+Y Capture| MSAA
     MSAA -->|Clean DOM Text| TI
     TI -->|POST /api/bridge/generate| VR
-    VR -->|Primary 3.5s Timeout| GEMINI
-    VR -.->|Fallback on 429/403| GROQ
-    VR -.->|Emergency Backup| NV
-    VR -->|Auto-Logs History Cap <= 10| SB
-    VR -->|Compilable Code| TI
+    VR -->|Inspects User Allotment & Priorities| DISPATCHER
+    DISPATCHER -->|Priority 1| P_GROQ
+    DISPATCHER -.->|Failover on 429| P_GEMINI
+    DISPATCHER -.->|Fallback| P_DEEPSEEK
+    VR -->|Rotates 10-Request Circular Buffer| SB
+    VR -->|Universal Format: text, candidates, choices| TI
     TI -->|Humanized Keystroke Injection| Target["Target Editor / Browser"]`,
   },
   {
@@ -80,9 +82,10 @@ const hotkeys = [
 ];
 
 const tiers = [
-  { provider: "Google Gemini 2.5 Flash", role: "Tier 1: Primary Engine", latency: "~1.2s", status: "Active", color: "#30d158" },
-  { provider: "Groq Llama-3.3-70B", role: "Tier 2: Ultra-Fast Failover", latency: "~0.8s", status: "Active", color: "#30d158" },
-  { provider: "NVIDIA NIM Llama-3.3-70B", role: "Tier 3: Emergency Backup", latency: "~2.1s", status: "Standby", color: "#0a84ff" },
+  { provider: "Groq Cloud (Llama-3.3-70B)", role: "Ultra-Fast LPU Engine", latency: "~0.4s", status: "Active", color: "#30d158" },
+  { provider: "Google Gemini 2.5 Flash Pool", role: "High-Context Multimodal Pool", latency: "~1.1s", status: "Active", color: "#30d158" },
+  { provider: "DeepSeek / OpenAI / Anthropic", role: "Deep Reasoning & Architecture", latency: "~1.8s", status: "Active", color: "#0a84ff" },
+  { provider: "Custom / Self-Hosted", role: "Local Ollama / vLLM Fallback", latency: "Variable", status: "Configurable", color: "#bf5af2" },
 ];
 
 export default function DocsPage() {
