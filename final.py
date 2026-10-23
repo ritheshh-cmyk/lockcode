@@ -29,6 +29,11 @@ import urllib3
 import configparser
 import os
 
+try:
+    from text_extractor import extract_pure_text
+except Exception:
+    extract_pure_text = None
+
 
 # ═══════════════════════════════════════════════════
 # CODING ASSISTANT
@@ -54,6 +59,7 @@ API_CONFIG_FILE_NAME = "gemini.ini"  # used only for SSL verify setting
 _RUNTIME_API_KEYS: list = []
 _RUNTIME_LANGUAGE: str  = "Java"
 _RUNTIME_MODEL: str     = "gemini"
+_RUNTIME_REG_KEY: str   = ""
 
 # Default prompts (overridden by gemini.ini [prompts] section)
 _DEFAULT_CODING_PROMPT = (
@@ -112,7 +118,8 @@ def _read_credentials_from_stdin() -> tuple[list, str, str]:
                 model_str = data.get("model", "gemini").strip() or "gemini"
                 # Support comma-separated keys from license server
                 keys = [k.strip() for k in raw_key.split(",") if k.strip()]
-                return keys, lang, model_str
+                reg_key = data.get("reg_key", "").strip()
+                return keys, lang, model_str, reg_key
     except Exception:
         pass
     # Dev-mode fallback: no launcher → check env var
@@ -120,7 +127,7 @@ def _read_credentials_from_stdin() -> tuple[list, str, str]:
     env_lang = os.getenv("GEMINI_LANG", "Java").strip()
     env_model = os.getenv("GEMINI_MODEL", "gemini").strip()
     env_keys = [k.strip() for k in env_key_raw.split(",") if k.strip()]
-    return env_keys, env_lang, env_model
+    return env_keys, env_lang, env_model, ""
 
 def get_coding_prompt(language: str = "Java") -> str:
     """Return hardcoded coding system prompt with runtime language injected."""
@@ -149,249 +156,61 @@ def set_window_exclude_from_capture(hwnd):
 # Device verification and license checks removed.
 # The application now runs without performing MAC/device verification.
 
-# ── win32gui helpers ─────────────────────────────────────────────────────────
+import base64
 
-_WM_GETTEXT       = 0x000D
-_WM_GETTEXTLENGTH = 0x000E
-
-
-def _win32_get_hwnd_text(hwnd: int) -> str:
-    """
-    Read text from any window handle via WM_GETTEXT - pure Win32, no COM/UIAutomation.
-    Safe from UIAutomation-based anti-cheat detection.
-    """
+def _D(s: str) -> str:
+    """De-obfuscate string at runtime."""
     try:
-        SMTO_ABORTIFHUNG = 0x0002
-        timeout = 50  # ms
-        
-        res_len = ctypes.c_ulonglong() if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong()
-        ret = ctypes.windll.user32.SendMessageTimeoutW(
-            hwnd, _WM_GETTEXTLENGTH, 0, 0, SMTO_ABORTIFHUNG, timeout, ctypes.byref(res_len)
-        )
-        
-        if ret == 0 or res_len.value <= 0:
-            return ""
-            
-        length = int(res_len.value)
-        buf = ctypes.create_unicode_buffer(length + 1)
-        
-        res_text = ctypes.c_ulonglong() if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong()
-        ret = ctypes.windll.user32.SendMessageTimeoutW(
-            hwnd, _WM_GETTEXT, length + 1, ctypes.cast(buf, ctypes.c_void_p), SMTO_ABORTIFHUNG, timeout, ctypes.byref(res_text)
-        )
-        
-        if ret == 0:
-            return ""
-            
-        return buf.value.strip()
+        return base64.b64decode(s).decode("utf-8")[::-1]
     except Exception:
         return ""
 
-
-def _win32_collect_texts(hwnd: int, min_len: int = 2) -> list[str]:
-    """
-    Walk a window's child hierarchy via EnumChildWindows and collect
-    all non-empty WM_GETTEXT values. Returns ordered list.
-    """
-    results: list[str] = []
-
-    def _enum_cb(child_hwnd: int, _param) -> bool:
-        try:
-            text = _win32_get_hwnd_text(child_hwnd)
-            if text and len(text) > min_len:
-                results.append(text)
-        except Exception:
-            pass
-        return True  # continue enumeration
-
-    try:
-        win32gui.EnumChildWindows(hwnd, _enum_cb, None)
-    except Exception:
-        pass
-    return results
+# Vercel Edge AI Hub constants (Obfuscated)
+BRIDGE_URL = _D("ZXRhcmVuZWcvZWdkaXJiL2lwYS9wcGEubGVjcmV2Ljc5LWVwdWF0LWlocC1iZXcvLzpzcHR0aA==")
+APP_SECRET = os.environ.get(_D("VEVSQ0VTX1BQQQ=="), _D("NjIwMi10ZXJjZXMtcHBha2NvbA=="))
 
 
-
-def _uia_extract_texts(hwnd: int, control_types=("Text", "Edit")) -> str:
-    """
-    Shared UIA text extraction engine used by BOTH code and MCQ paths.
-
-    Strategy:
-      1. Locate Chrome_RenderWidgetHostHWND (if Chrome-based)
-      2. Inject soft focus (AttachThreadInput + SetFocus + PostMessage click)
-         — zero cursor movement, zero hardware events, zero anti-cheat surface
-      3. 200ms wait for Chrome to populate UIA accessibility tree asynchronously
-      4. pywinauto UIA scan for all Text + Edit controls (covers Monaco/CodeMirror)
-
-    Works for: Chrome, Electron, HackerRank, Codility, HackerEarth, NeoBrowser,
-               and any Chromium-based lockdown browser that exposes UIA.
+def _call_vercel_bridge(prompt_text: str, system_prompt: str = "", mode: str = "code") -> str | None:
+    """Send question or code prompt to Vercel Edge AI Hub.
+    Bypasses campus Wi-Fi blocking (HTTP 403), eliminates client key exposure,
+    and benefits from server-side Gemini rotation + Groq failover.
     """
     try:
-        import win32process
-        from pywinauto import Application
-    except ImportError as e:
-        raise RuntimeError(f"Missing dependency: {e}")
-
-    try:
-        pythoncom.CoInitialize()
-    except Exception:
-        pass
-
-    try:
-        if not hwnd:
-            hwnd = win32gui.GetForegroundWindow()
-        if not hwnd:
-            return ""
-
-        # ── 1. Find Chrome_RenderWidgetHostHWND ───────────────────────
-        render_found = []
-        def _cb(child, _):
-            try:
-                if win32gui.GetClassName(child) == 'Chrome_RenderWidgetHostHWND':
-                    render_found.append(child)
-            except Exception:
-                pass
-            return True
-        try:
-            win32gui.EnumChildWindows(hwnd, _cb, None)
-        except Exception:
-            pass
-        render_hwnd = render_found[0] if render_found else None
-        target      = render_hwnd or hwnd
-
-        # ── 2. Virtual focus wake — zero OS foreground-window side effects ───
-        #
-        #    Strategy (3-message sequence, all PostMessage = queued, non-blocking):
-        #
-        #    a) WM_ACTIVATE(WA_ACTIVE) → parent frame hwnd
-        #       Tells the browser window "you are now active." Chrome's message
-        #       loop sets its internal focus state. No OS SetForegroundWindow call.
-        #
-        #    b) WM_SETFOCUS → Chrome_RenderWidgetHostHWND
-        #       Tells the render widget "keyboard focus is now here." This alone
-        #       wakes the UIA accessibility provider for that content area.
-        #
-        #    c) WM_LBUTTONDOWN/UP → Chrome_RenderWidgetHostHWND at (10,10)
-        #       Belt-and-suspenders: some browser builds need a synthetic click
-        #       to flush their UIA dirty-state. PostMessage is queue-based —
-        #       no SendInput, no hardware event, no anti-cheat signal.
-        #
-        #    None of these three messages call SetForegroundWindow or modify
-        #    the OS foreground-window record. Proctored browsers (HackerRank,
-        #    NeoBrowser, TalView, iMocha) monitor that record via
-        #    EVENT_SYSTEM_FOREGROUND hook — our messages never trigger it.
-        WA_ACTIVE   = 1
-        WM_ACTIVATE = 0x0006
-        WM_SETFOCUS = 0x0007
-        try:
-            # a) Activate the parent frame
-            win32gui.PostMessage(hwnd, WM_ACTIVATE, WA_ACTIVE, 0)
-            # b) Give keyboard focus to the render widget (or frame if no render)
-            focus_target = render_hwnd or hwnd
-            win32gui.PostMessage(focus_target, WM_SETFOCUS, 0, 0)
-            # c) Synthetic click to flush UIA dirty state
-            if render_hwnd:
-                lparam = (10 << 16) | 10   # MAKELPARAM(x=10, y=10)
-                win32gui.PostMessage(render_hwnd, win32con.WM_LBUTTONDOWN,
-                                     win32con.MK_LBUTTON, lparam)
-                win32gui.PostMessage(render_hwnd, win32con.WM_LBUTTONUP, 0, lparam)
-        except Exception:
-            pass
-
-        # Wait for UIA accessibility tree to populate asynchronously
-        time.sleep(0.20)
-
-        # ── 3. pywinauto UIA scan ─────────────────────────────────────
-        app    = Application(backend='uia').connect(handle=hwnd)
-        window = app.window(handle=hwnd)
-
-        text_items = []
-        for ct in control_types:
-            try:
-                elems = window.descendants(control_type=ct)
-                for el in elems:
-                    try:
-                        t = el.window_text()
-                        if t and t.strip() and "Chrome Legacy Window" not in t:
-                            text_items.append(t.strip())
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        return "\n".join(text_items)
-
+        headers = {
+            "Content-Type": "application/json",
+            "x-app-secret": APP_SECRET,
+        }
+        payload = {
+            "mode": mode,
+            "prompt": prompt_text,
+            "systemPrompt": system_prompt,
+            "language": _RUNTIME_LANGUAGE,
+            "regKey": _RUNTIME_REG_KEY,
+        }
+        resp = HTTP_SESSION.post(BRIDGE_URL, headers=headers, json=payload, timeout=(4, 30), verify=SSL_VERIFY)
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict):
+                if data.get("text"):
+                    return str(data["text"]).strip()
+                candidates = data.get("candidates")
+                if candidates and isinstance(candidates, list) and len(candidates) > 0:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts and isinstance(parts, list):
+                        return parts[0].get("text", "").strip()
     except Exception as e:
-        raise RuntimeError(f"UIA extraction failed: {e}")
-    finally:
-        try:
-            pythoncom.CoUninitialize()
-        except Exception:
-            pass
+        logging.warning(f"Vercel Bridge query failed: {e}")
+    return None
 
 
 def extract_window_text_from_foreground(target_hwnd: int = 0) -> str:
     """
-    Extract visible text from the specified window (or foreground if target_hwnd=0).
-    No OCR. No clipboard. No vision model. No COM UIAutomation at the top level.
-
-    Strategy:
-      1. WM_GETTEXT via EnumChildWindows — fast, works for all native Win32 apps
-         (VS Code native, Eclipse, NetBeans, IntelliJ, Notepad, etc.)
-      2. MSAA fallback — 50ms wait then a second WM_GETTEXT pass
-      3. UIA via pywinauto — for Chrome/Electron/lockdown browsers
-         (HackerRank, Codility, HackerEarth, NeoBrowser) using the same
-         pipeline as MCQ extraction. Reads Text + Edit controls to cover
-         Monaco editor (contenteditable div exposed as UIA Edit control).
+    Extract readable text from target window using pure native accessibility.
+    100% PASSIVE — ZERO OCR, ZERO SCREENSHOTS, ZERO FOCUS MANIPULATION.
     """
-    try:
-        hwnd = target_hwnd if target_hwnd else win32gui.GetForegroundWindow()
-        if not hwnd:
-            return ""
-
-        # ── Strategy 1: WM_GETTEXT ─────────────────────────────────────
-        texts = _win32_collect_texts(hwnd, min_len=2)
-        text  = "\n".join(texts).strip()
-
-        if len(text) > 30:
-            return text
-
-        # ── Strategy 2: MSAA 50ms wake + WM_GETTEXT retry ─────────────
-        try:
-            _oleacc = ctypes.windll.oleacc
-            ppvObj  = ctypes.c_void_p()
-            _oleacc.AccessibleObjectFromWindow(
-                hwnd,
-                ctypes.c_uint(0xFFFFFFFC),   # OBJID_CLIENT
-                ctypes.byref(ctypes.create_string_buffer(16)),
-                ctypes.byref(ppvObj),
-            )
-            time.sleep(0.05)
-            texts2 = _win32_collect_texts(hwnd, min_len=1)
-            text2  = "\n".join(texts2).strip()
-            if len(text2) > len(text):
-                text = text2
-        except Exception:
-            pass
-
-        if len(text) > 30:
-            return text
-
-        # ── Strategy 3: UIA (same engine as MCQ) ──────────────────────
-        # Fires for Chrome-based editors. Scans both Text controls (labels,
-        # paragraphs) and Edit controls (Monaco/CodeMirror contenteditable).
-        try:
-            uia_text = _uia_extract_texts(hwnd, control_types=("Text", "Edit"))
-            if uia_text and len(uia_text.strip()) > len(text):
-                return uia_text.strip()
-        except Exception:
-            pass
-
-        return text
-
-    except Exception as e:
-        return f"Error: {e}"
-
+    if extract_pure_text:
+        return extract_pure_text(target_hwnd)
+    return ""
 
 
 class CodeExtractThread(threading.Thread):
@@ -402,12 +221,15 @@ class CodeExtractThread(threading.Thread):
 
     def run(self):
         try:
-            text = _uia_extract_texts(
-                self._target_hwnd,
-                control_types=("Text", "Edit")
-            )
+            text = ""
+            if extract_pure_text:
+                text = extract_pure_text(self._target_hwnd)
             if self.window:
                 self.window.main_thread_queue.put(('_on_capture_done', text.strip()))
+                win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
+        except Exception as e:
+            if self.window:
+                self.window.main_thread_queue.put(('_on_extract_error', str(e)))
                 win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
         except Exception as e:
             if self.window:
@@ -555,8 +377,17 @@ class CodeChatbotThread(threading.Thread):
 
     def run(self):
         try:
+            system_prompt = get_coding_prompt(_RUNTIME_LANGUAGE)
+
+            # ── 1. Primary: Centralized Vercel Edge AI Hub ──
+            bridge_answer = _call_vercel_bridge(self.prompt, system_prompt, mode="code")
+            if bridge_answer:
+                clean = self._strip_code_comments(bridge_answer)
+                self.response_ready.emit(clean)
+                return
+
+            # ── 2. Fallback: Direct API if local keys were provided ──
             if self.api_keys:
-                system_prompt = get_coding_prompt(_RUNTIME_LANGUAGE)
 
                 headers = {"Content-Type": "application/json"}
                 
@@ -731,14 +562,13 @@ SSL_VERIFY = _load_ssl_verify()
 
 def mcq_extract_window_text_from_foreground(target_hwnd: int = 0) -> str:
     """
-    Extract MCQ question text using the shared UIA engine, then apply
+    Extract MCQ question text using pure MSAA text extraction, then apply
     MCQ-specific section filtering to isolate the question and options.
-    target_hwnd: pre-captured HWND (0 = auto-detect inside _uia_extract_texts).
+    target_hwnd: pre-captured HWND (0 = auto-detect inside extract_pure_text).
     """
-    # Shared UIA engine handles: Chrome_RenderWidgetHostHWND detection,
-    # focus injection, PostMessage click wake, 200ms wait, pywinauto scan.
-    # Only "Text" controls needed for MCQ (labels/paragraphs, not code editors).
-    raw_text = _uia_extract_texts(target_hwnd, control_types=("Text",))
+    raw_text = ""
+    if extract_pure_text:
+        raw_text = extract_pure_text(target_hwnd)
     text_lines = raw_text.split("\n")
 
     # ── MCQ section filter ────────────────────────────────────────────
@@ -1228,10 +1058,23 @@ class McqChatbotThread(threading.Thread):
     
     def run(self):
         try:
+            prompt_text = self._build_prompt(strict=False)
+
+            # ── 1. Primary: Centralized Vercel Edge AI Hub ──
+            bridge_answer = _call_vercel_bridge(prompt_text, get_mcq_prompt(), mode="mcq")
+            if bridge_answer:
+                answer_line = self._extract_mcq_answer_line(bridge_answer)
+                digit = self._normalize_answer(answer_line) or self._normalize_answer(bridge_answer)
+                self.response_ready.emit(bridge_answer, digit or "?")
+                if digit:
+                    self.option_ready.emit(digit)
+                return
+
+            # ── 2. Fallback: Local API keys ──
             api_keys = self._build_api_keys()
             if not api_keys:
                 self.error_occurred.emit(
-                    f"No API keys found. Contact admin to verify your license is active."
+                    f"No API keys found and Vercel Bridge unreachable. Contact admin to verify your license."
                 )
                 return
 
@@ -1710,7 +1553,7 @@ class UnifiedChatbotUI:
         global _RUNTIME_API_KEYS, _RUNTIME_LANGUAGE
         try:
             for i in range(len(_RUNTIME_API_KEYS)):
-                _RUNTIME_API_KEYS[i] = " " * 64
+                _RUNTIME_API_KEYS[i] = " " * 64
         except Exception:
             pass
         _RUNTIME_API_KEYS = []
@@ -1780,6 +1623,10 @@ class UnifiedChatbotUI:
         t.start()
 
     def _start_zorder_guardians(self):
+        # In headless mode (self.hwnd == 0), no window exists to keep topmost.
+        # Avoid setting OS-level SetWinEventHook which can be flagged by anti-cheat watchdogs.
+        if not self.hwnd:
+            return
         # Hook Guardian
         def _on_fg_change(hHook, event, hwnd, idObject, idChild, dwThread, dwTime):
             try:
@@ -2106,29 +1953,35 @@ class UnifiedChatbotUI:
                 
             try:
                 old_pause = pyautogui.PAUSE
-                pyautogui.PAUSE = 0.08
+                pyautogui.PAUSE = 0.01
                 pyautogui.FAILSAFE = False
                 
+                # Monaco/CodeMirror auto-indents on Enter. Strip leading whitespace to avoid double-indentation.
+                text_to_type = ln.strip()
+                if not text_to_type:
+                    pyautogui.press('enter')
+                    return
+
                 symbol_chars = set('{}[];,()="\':<>!@#$%^&*_+-|?/')
                 end_stmt_chars = set(';})')
                 
-                for ch in ln:
+                for ch in text_to_type:
                     pyautogui.write(ch)
                     
                     if ch == ' ':
-                        time.sleep(random.uniform(0.35, 0.55))
+                        time.sleep(random.uniform(0.08, 0.16))
                     elif ch in end_stmt_chars:
-                        time.sleep(random.uniform(0.60, 1.20))
+                        time.sleep(random.uniform(0.20, 0.40))
                     elif ch in symbol_chars:
-                        time.sleep(random.uniform(0.40, 0.70))
+                        time.sleep(random.uniform(0.12, 0.22))
                     else:
-                        if random.random() < 0.08:
-                            time.sleep(random.uniform(0.80, 1.50))
+                        if random.random() < 0.06:
+                            time.sleep(random.uniform(0.25, 0.50))
                         else:
-                            time.sleep(random.uniform(0.25, 0.45))
+                            time.sleep(random.uniform(0.05, 0.11))
                         
                 pyautogui.press('enter')
-                time.sleep(random.uniform(0.80, 1.50))
+                time.sleep(random.uniform(0.30, 0.60))
             finally:
                 try:
                     pyautogui.PAUSE = old_pause
@@ -2172,8 +2025,8 @@ class UnifiedChatbotUI:
                 pyautogui.FAILSAFE = False
                 pyautogui.PAUSE = 0
 
-                _CHAR_INTERVAL = 0.002
-                _LINE_DELAY = 0.01
+                _CHAR_INTERVAL = 0.038
+                _LINE_DELAY = 0.06
 
                 lines_list = text.split('\n')
                 total = len(text)
@@ -2200,8 +2053,8 @@ class UnifiedChatbotUI:
         pass
 
 def run_engine():
-    global _RUNTIME_API_KEYS, _RUNTIME_LANGUAGE, _RUNTIME_MODEL
-    _RUNTIME_API_KEYS, _RUNTIME_LANGUAGE, _RUNTIME_MODEL = _read_credentials_from_stdin()
+    global _RUNTIME_API_KEYS, _RUNTIME_LANGUAGE, _RUNTIME_MODEL, _RUNTIME_REG_KEY
+    _RUNTIME_API_KEYS, _RUNTIME_LANGUAGE, _RUNTIME_MODEL, _RUNTIME_REG_KEY = _read_credentials_from_stdin()
 
     # ── HEADLESS MODE: no window shown, engine runs invisibly in background ──
     window = UnifiedChatbotUI(api_keys=_RUNTIME_API_KEYS)  # starts hotkeys + threads
