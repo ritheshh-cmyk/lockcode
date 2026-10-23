@@ -11,11 +11,9 @@ except Exception:
 import warnings
 import requests
 import pythoncom
-from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
-    QLabel)
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from pynput import keyboard
 import threading
+import queue
 import ctypes
 from collections import deque
 import json
@@ -30,6 +28,11 @@ import win32api
 import urllib3
 import configparser
 import os
+
+try:
+    from text_extractor import extract_pure_text
+except Exception:
+    extract_pure_text = None
 
 
 # ═══════════════════════════════════════════════════
@@ -56,6 +59,7 @@ API_CONFIG_FILE_NAME = "gemini.ini"  # used only for SSL verify setting
 _RUNTIME_API_KEYS: list = []
 _RUNTIME_LANGUAGE: str  = "Java"
 _RUNTIME_MODEL: str     = "gemini"
+_RUNTIME_REG_KEY: str   = ""
 
 # Default prompts (overridden by gemini.ini [prompts] section)
 _DEFAULT_CODING_PROMPT = (
@@ -114,7 +118,8 @@ def _read_credentials_from_stdin() -> tuple[list, str, str]:
                 model_str = data.get("model", "gemini").strip() or "gemini"
                 # Support comma-separated keys from license server
                 keys = [k.strip() for k in raw_key.split(",") if k.strip()]
-                return keys, lang, model_str
+                reg_key = data.get("reg_key", "").strip()
+                return keys, lang, model_str, reg_key
     except Exception:
         pass
     # Dev-mode fallback: no launcher → check env var
@@ -122,7 +127,7 @@ def _read_credentials_from_stdin() -> tuple[list, str, str]:
     env_lang = os.getenv("GEMINI_LANG", "Java").strip()
     env_model = os.getenv("GEMINI_MODEL", "gemini").strip()
     env_keys = [k.strip() for k in env_key_raw.split(",") if k.strip()]
-    return env_keys, env_lang, env_model
+    return env_keys, env_lang, env_model, ""
 
 def get_coding_prompt(language: str = "Java") -> str:
     """Return hardcoded coding system prompt with runtime language injected."""
@@ -151,279 +156,94 @@ def set_window_exclude_from_capture(hwnd):
 # Device verification and license checks removed.
 # The application now runs without performing MAC/device verification.
 
-# ── win32gui helpers ─────────────────────────────────────────────────────────
+import base64
 
-_WM_GETTEXT       = 0x000D
-_WM_GETTEXTLENGTH = 0x000E
-
-
-def _win32_get_hwnd_text(hwnd: int) -> str:
-    """
-    Read text from any window handle via WM_GETTEXT - pure Win32, no COM/UIAutomation.
-    Safe from UIAutomation-based anti-cheat detection.
-    """
+def _D(s: str) -> str:
+    """De-obfuscate string at runtime."""
     try:
-        SMTO_ABORTIFHUNG = 0x0002
-        timeout = 50  # ms
-        
-        res_len = ctypes.c_ulonglong() if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong()
-        ret = ctypes.windll.user32.SendMessageTimeoutW(
-            hwnd, _WM_GETTEXTLENGTH, 0, 0, SMTO_ABORTIFHUNG, timeout, ctypes.byref(res_len)
-        )
-        
-        if ret == 0 or res_len.value <= 0:
-            return ""
-            
-        length = int(res_len.value)
-        buf = ctypes.create_unicode_buffer(length + 1)
-        
-        res_text = ctypes.c_ulonglong() if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong()
-        ret = ctypes.windll.user32.SendMessageTimeoutW(
-            hwnd, _WM_GETTEXT, length + 1, ctypes.cast(buf, ctypes.c_void_p), SMTO_ABORTIFHUNG, timeout, ctypes.byref(res_text)
-        )
-        
-        if ret == 0:
-            return ""
-            
-        return buf.value.strip()
+        return base64.b64decode(s).decode("utf-8")[::-1]
     except Exception:
         return ""
 
-
-def _win32_collect_texts(hwnd: int, min_len: int = 2) -> list[str]:
-    """
-    Walk a window's child hierarchy via EnumChildWindows and collect
-    all non-empty WM_GETTEXT values. Returns ordered list.
-    """
-    results: list[str] = []
-
-    def _enum_cb(child_hwnd: int, _param) -> bool:
-        try:
-            text = _win32_get_hwnd_text(child_hwnd)
-            if text and len(text) > min_len:
-                results.append(text)
-        except Exception:
-            pass
-        return True  # continue enumeration
-
-    try:
-        win32gui.EnumChildWindows(hwnd, _enum_cb, None)
-    except Exception:
-        pass
-    return results
+# Vercel Edge AI Hub constants (Obfuscated)
+BRIDGE_URL = _D("ZXRhcmVuZWcvZWdkaXJiL2lwYS9wcGEubGVjcmV2Ljc5LWVwdWF0LWlocC1iZXcvLzpzcHR0aA==")
+APP_SECRET = os.environ.get(_D("VEVSQ0VTX1BQQQ=="), _D("NjIwMi10ZXJjZXMtcHBha2NvbA=="))
 
 
-
-def _uia_extract_texts(hwnd: int, control_types=("Text", "Edit")) -> str:
-    """
-    Shared UIA text extraction engine used by BOTH code and MCQ paths.
-
-    Strategy:
-      1. Locate Chrome_RenderWidgetHostHWND (if Chrome-based)
-      2. Inject soft focus (AttachThreadInput + SetFocus + PostMessage click)
-         — zero cursor movement, zero hardware events, zero anti-cheat surface
-      3. 200ms wait for Chrome to populate UIA accessibility tree asynchronously
-      4. pywinauto UIA scan for all Text + Edit controls (covers Monaco/CodeMirror)
-
-    Works for: Chrome, Electron, HackerRank, Codility, HackerEarth, NeoBrowser,
-               and any Chromium-based lockdown browser that exposes UIA.
+def _call_vercel_bridge(prompt_text: str, system_prompt: str = "", mode: str = "code") -> str | None:
+    """Send question or code prompt to Vercel Edge AI Hub.
+    Bypasses campus Wi-Fi blocking (HTTP 403), eliminates client key exposure,
+    and benefits from server-side Gemini rotation + Groq failover.
     """
     try:
-        import win32process
-        from pywinauto import Application
-    except ImportError as e:
-        raise RuntimeError(f"Missing dependency: {e}")
-
-    try:
-        pythoncom.CoInitialize()
-    except Exception:
-        pass
-
-    try:
-        if not hwnd:
-            hwnd = win32gui.GetForegroundWindow()
-        if not hwnd:
-            return ""
-
-        # ── 1. Find Chrome_RenderWidgetHostHWND ───────────────────────
-        render_found = []
-        def _cb(child, _):
-            try:
-                if win32gui.GetClassName(child) == 'Chrome_RenderWidgetHostHWND':
-                    render_found.append(child)
-            except Exception:
-                pass
-            return True
-        try:
-            win32gui.EnumChildWindows(hwnd, _cb, None)
-        except Exception:
-            pass
-        render_hwnd = render_found[0] if render_found else None
-        target      = render_hwnd or hwnd
-
-        # ── 2. Virtual focus wake — zero OS foreground-window side effects ───
-        #
-        #    Strategy (3-message sequence, all PostMessage = queued, non-blocking):
-        #
-        #    a) WM_ACTIVATE(WA_ACTIVE) → parent frame hwnd
-        #       Tells the browser window "you are now active." Chrome's message
-        #       loop sets its internal focus state. No OS SetForegroundWindow call.
-        #
-        #    b) WM_SETFOCUS → Chrome_RenderWidgetHostHWND
-        #       Tells the render widget "keyboard focus is now here." This alone
-        #       wakes the UIA accessibility provider for that content area.
-        #
-        #    c) WM_LBUTTONDOWN/UP → Chrome_RenderWidgetHostHWND at (10,10)
-        #       Belt-and-suspenders: some browser builds need a synthetic click
-        #       to flush their UIA dirty-state. PostMessage is queue-based —
-        #       no SendInput, no hardware event, no anti-cheat signal.
-        #
-        #    None of these three messages call SetForegroundWindow or modify
-        #    the OS foreground-window record. Proctored browsers (HackerRank,
-        #    NeoBrowser, TalView, iMocha) monitor that record via
-        #    EVENT_SYSTEM_FOREGROUND hook — our messages never trigger it.
-        WA_ACTIVE   = 1
-        WM_ACTIVATE = 0x0006
-        WM_SETFOCUS = 0x0007
-        try:
-            # a) Activate the parent frame
-            win32gui.PostMessage(hwnd, WM_ACTIVATE, WA_ACTIVE, 0)
-            # b) Give keyboard focus to the render widget (or frame if no render)
-            focus_target = render_hwnd or hwnd
-            win32gui.PostMessage(focus_target, WM_SETFOCUS, 0, 0)
-            # c) Synthetic click to flush UIA dirty state
-            if render_hwnd:
-                lparam = (10 << 16) | 10   # MAKELPARAM(x=10, y=10)
-                win32gui.PostMessage(render_hwnd, win32con.WM_LBUTTONDOWN,
-                                     win32con.MK_LBUTTON, lparam)
-                win32gui.PostMessage(render_hwnd, win32con.WM_LBUTTONUP, 0, lparam)
-        except Exception:
-            pass
-
-        # Wait for UIA accessibility tree to populate asynchronously
-        time.sleep(0.20)
-
-        # ── 3. pywinauto UIA scan ─────────────────────────────────────
-        app    = Application(backend='uia').connect(handle=hwnd)
-        window = app.window(handle=hwnd)
-
-        text_items = []
-        for ct in control_types:
-            try:
-                elems = window.descendants(control_type=ct)
-                for el in elems:
-                    try:
-                        t = el.window_text()
-                        if t and t.strip() and "Chrome Legacy Window" not in t:
-                            text_items.append(t.strip())
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        return "\n".join(text_items)
-
+        headers = {
+            "Content-Type": "application/json",
+            "x-app-secret": APP_SECRET,
+        }
+        payload = {
+            "mode": mode,
+            "prompt": prompt_text,
+            "systemPrompt": system_prompt,
+            "language": _RUNTIME_LANGUAGE,
+            "regKey": _RUNTIME_REG_KEY,
+        }
+        resp = HTTP_SESSION.post(BRIDGE_URL, headers=headers, json=payload, timeout=(4, 30), verify=SSL_VERIFY)
+        if resp and resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict):
+                if data.get("text"):
+                    return str(data["text"]).strip()
+                candidates = data.get("candidates")
+                if candidates and isinstance(candidates, list) and len(candidates) > 0:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts and isinstance(parts, list):
+                        return parts[0].get("text", "").strip()
     except Exception as e:
-        raise RuntimeError(f"UIA extraction failed: {e}")
-    finally:
-        try:
-            pythoncom.CoUninitialize()
-        except Exception:
-            pass
+        logging.warning(f"Vercel Bridge query failed: {e}")
+    return None
 
 
 def extract_window_text_from_foreground(target_hwnd: int = 0) -> str:
     """
-    Extract visible text from the specified window (or foreground if target_hwnd=0).
-    No OCR. No clipboard. No vision model. No COM UIAutomation at the top level.
-
-    Strategy:
-      1. WM_GETTEXT via EnumChildWindows — fast, works for all native Win32 apps
-         (VS Code native, Eclipse, NetBeans, IntelliJ, Notepad, etc.)
-      2. MSAA fallback — 50ms wait then a second WM_GETTEXT pass
-      3. UIA via pywinauto — for Chrome/Electron/lockdown browsers
-         (HackerRank, Codility, HackerEarth, NeoBrowser) using the same
-         pipeline as MCQ extraction. Reads Text + Edit controls to cover
-         Monaco editor (contenteditable div exposed as UIA Edit control).
+    Extract readable text from target window using pure native accessibility.
+    100% PASSIVE — ZERO OCR, ZERO SCREENSHOTS, ZERO FOCUS MANIPULATION.
     """
-    try:
-        hwnd = target_hwnd if target_hwnd else win32gui.GetForegroundWindow()
-        if not hwnd:
-            return ""
-
-        # ── Strategy 1: WM_GETTEXT ─────────────────────────────────────
-        texts = _win32_collect_texts(hwnd, min_len=2)
-        text  = "\n".join(texts).strip()
-
-        if len(text) > 30:
-            return text
-
-        # ── Strategy 2: MSAA 50ms wake + WM_GETTEXT retry ─────────────
-        try:
-            _oleacc = ctypes.windll.oleacc
-            ppvObj  = ctypes.c_void_p()
-            _oleacc.AccessibleObjectFromWindow(
-                hwnd,
-                ctypes.c_uint(0xFFFFFFFC),   # OBJID_CLIENT
-                ctypes.byref(ctypes.create_string_buffer(16)),
-                ctypes.byref(ppvObj),
-            )
-            time.sleep(0.05)
-            texts2 = _win32_collect_texts(hwnd, min_len=1)
-            text2  = "\n".join(texts2).strip()
-            if len(text2) > len(text):
-                text = text2
-        except Exception:
-            pass
-
-        if len(text) > 30:
-            return text
-
-        # ── Strategy 3: UIA (same engine as MCQ) ──────────────────────
-        # Fires for Chrome-based editors. Scans both Text controls (labels,
-        # paragraphs) and Edit controls (Monaco/CodeMirror contenteditable).
-        try:
-            uia_text = _uia_extract_texts(hwnd, control_types=("Text", "Edit"))
-            if uia_text and len(uia_text.strip()) > len(text):
-                return uia_text.strip()
-        except Exception:
-            pass
-
-        return text
-
-    except Exception as e:
-        return f"Error: {e}"
+    if extract_pure_text:
+        return extract_pure_text(target_hwnd)
+    return ""
 
 
-
-class CodeExtractThread(QThread):
-    finished = pyqtSignal(str)
-    error = pyqtSignal(str)
-
-    def __init__(self, target_hwnd: int = 0):
-        super().__init__()
+class CodeExtractThread(threading.Thread):
+    def __init__(self, target_hwnd: int = 0, window=None):
+        super().__init__(daemon=True)
         self._target_hwnd = target_hwnd  # pre-captured non-TITAN hwnd from HWNDTracker
+        self.window = window
 
     def run(self):
-        # Use the same UIA engine as MCQ extraction.
-        # _uia_extract_texts does SwitchToThisWindow(target_hwnd) inside the
-        # thread — this forces the browser/editor back to foreground before
-        # reading it, solving the TITAN-HUD-text-capture bug permanently.
-        # Edit controls cover Monaco/CodeMirror (Chrome contenteditable).
-        # Text controls cover problem statement paragraphs and labels.
         try:
-            text = _uia_extract_texts(
-                self._target_hwnd,
-                control_types=("Text", "Edit")
-            )
-            self.finished.emit(text.strip())
+            text = ""
+            if extract_pure_text:
+                text = extract_pure_text(self._target_hwnd)
+            if self.window:
+                self.window.main_thread_queue.put(('_on_capture_done', text.strip()))
+                win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
         except Exception as e:
-            self.error.emit(str(e))
+            if self.window:
+                self.window.main_thread_queue.put(('_on_extract_error', str(e)))
+                win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
+        except Exception as e:
+            if self.window:
+                self.window.main_thread_queue.put(('_on_extract_error', str(e)))
+                win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
 
-class CodeChatbotThread(QThread):
+class CodeSignalMock:
+    def __init__(self, callback):
+        self.callback = callback
+    def emit(self, *args):
+        self.callback(*args)
+
+class CodeChatbotThread(threading.Thread):
     """Thread to send a prompt to a generative model (if api_key provided) or return a local fallback."""
-    response_ready = pyqtSignal(str)
-    error_occurred = pyqtSignal(str)
     MAX_429_RETRIES = 1
     BASE_429_BACKOFF_SECONDS = 1
 
@@ -434,10 +254,23 @@ class CodeChatbotThread(QThread):
         "gemini-flash-latest",
     ]
 
-    def __init__(self, prompt, api_keys=None):
-        super().__init__()
+    def __init__(self, prompt, api_keys=None, window=None):
+        super().__init__(daemon=True)
         self.prompt = prompt
         self.api_keys = list(api_keys or [])
+        self.window = window
+        self.response_ready = CodeSignalMock(self._emit_response)
+        self.error_occurred = CodeSignalMock(self._emit_error)
+
+    def _emit_response(self, clean):
+        if self.window:
+            self.window.main_thread_queue.put(('_handle_code_response', clean))
+            win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
+
+    def _emit_error(self, err_text):
+        if self.window:
+            self.window.main_thread_queue.put(('_handle_error', err_text))
+            win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
 
     def _strip_code_comments(self, code: str) -> str:
         """Post-processing safety net: remove comment lines the AI added despite instructions.
@@ -544,8 +377,17 @@ class CodeChatbotThread(QThread):
 
     def run(self):
         try:
+            system_prompt = get_coding_prompt(_RUNTIME_LANGUAGE)
+
+            # ── 1. Primary: Centralized Vercel Edge AI Hub ──
+            bridge_answer = _call_vercel_bridge(self.prompt, system_prompt, mode="code")
+            if bridge_answer:
+                clean = self._strip_code_comments(bridge_answer)
+                self.response_ready.emit(clean)
+                return
+
+            # ── 2. Fallback: Direct API if local keys were provided ──
             if self.api_keys:
-                system_prompt = get_coding_prompt(_RUNTIME_LANGUAGE)
 
                 headers = {"Content-Type": "application/json"}
                 
@@ -720,14 +562,13 @@ SSL_VERIFY = _load_ssl_verify()
 
 def mcq_extract_window_text_from_foreground(target_hwnd: int = 0) -> str:
     """
-    Extract MCQ question text using the shared UIA engine, then apply
+    Extract MCQ question text using pure MSAA text extraction, then apply
     MCQ-specific section filtering to isolate the question and options.
-    target_hwnd: pre-captured HWND (0 = auto-detect inside _uia_extract_texts).
+    target_hwnd: pre-captured HWND (0 = auto-detect inside extract_pure_text).
     """
-    # Shared UIA engine handles: Chrome_RenderWidgetHostHWND detection,
-    # focus injection, PostMessage click wake, 200ms wait, pywinauto scan.
-    # Only "Text" controls needed for MCQ (labels/paragraphs, not code editors).
-    raw_text = _uia_extract_texts(target_hwnd, control_types=("Text",))
+    raw_text = ""
+    if extract_pure_text:
+        raw_text = extract_pure_text(target_hwnd)
     text_lines = raw_text.split("\n")
 
     # ── MCQ section filter ────────────────────────────────────────────
@@ -779,27 +620,31 @@ def mcq_extract_window_text_from_foreground(target_hwnd: int = 0) -> str:
     return result_text.strip()
 
 
-class McqExtractThread(QThread):
-    finished = pyqtSignal(str)
-    error    = pyqtSignal(str)
-
-    def __init__(self, target_hwnd: int = 0):
-        super().__init__()
+class McqExtractThread(threading.Thread):
+    def __init__(self, target_hwnd: int = 0, window=None):
+        super().__init__(daemon=True)
         self._target_hwnd = target_hwnd  # pre-captured before any Qt UI updates
+        self.window = window
 
     def run(self):
-        # UIA via pywinauto — COM initialised inside the extraction function
         try:
             text = mcq_extract_window_text_from_foreground(self._target_hwnd)
-            self.finished.emit(text)
+            if self.window:
+                self.window.main_thread_queue.put(('_on_capture_done', text))
+                win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
         except Exception as e:
-            self.error.emit(str(e))
+            if self.window:
+                self.window.main_thread_queue.put(('_on_extract_error', str(e)))
+                win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
 
 
-class McqChatbotThread(QThread):
-    response_ready = pyqtSignal(str, str)  # (answer_text, digit)
-    option_ready = pyqtSignal(str)
-    error_occurred = pyqtSignal(str)
+class McqSignalMock:
+    def __init__(self, callback):
+        self.callback = callback
+    def emit(self, *args):
+        self.callback(*args)
+
+class McqChatbotThread(threading.Thread):
     _cached_model_candidates = []
     _model_cache_built = False
     _preferred_route = None  # tuple(api_version, model_name)
@@ -807,10 +652,29 @@ class McqChatbotThread(QThread):
     _route_cooldowns = {}  # (api_version, model_name) -> monotonic timestamp
     _api_key_cooldowns = {}  # api_key -> monotonic timestamp
     
-    def __init__(self, prompt, api_keys):
-        super().__init__()
+    def __init__(self, prompt, api_keys, window=None):
+        super().__init__(daemon=True)
         self.prompt = prompt
         self.api_keys = list(api_keys or [])
+        self.window = window
+        self.error_occurred = McqSignalMock(self._emit_error)
+        self.response_ready = McqSignalMock(self._emit_response)
+        self.option_ready = McqSignalMock(self._emit_option)
+
+    def _emit_error(self, err_text):
+        if self.window:
+            self.window.main_thread_queue.put(('_handle_error', err_text))
+            win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
+
+    def _emit_response(self, full_answer_text, digit):
+        if self.window:
+            self.window.main_thread_queue.put(('_handle_mcq_response', full_answer_text, digit))
+            win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
+
+    def _emit_option(self, digit):
+        if self.window:
+            self.window.main_thread_queue.put(('_move_cursor', digit))
+            win32gui.PostMessage(self.window.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
 
     def _extract_api_error_message(self, response):
         try:
@@ -1194,10 +1058,23 @@ class McqChatbotThread(QThread):
     
     def run(self):
         try:
+            prompt_text = self._build_prompt(strict=False)
+
+            # ── 1. Primary: Centralized Vercel Edge AI Hub ──
+            bridge_answer = _call_vercel_bridge(prompt_text, get_mcq_prompt(), mode="mcq")
+            if bridge_answer:
+                answer_line = self._extract_mcq_answer_line(bridge_answer)
+                digit = self._normalize_answer(answer_line) or self._normalize_answer(bridge_answer)
+                self.response_ready.emit(bridge_answer, digit or "?")
+                if digit:
+                    self.option_ready.emit(digit)
+                return
+
+            # ── 2. Fallback: Local API keys ──
             api_keys = self._build_api_keys()
             if not api_keys:
                 self.error_occurred.emit(
-                    f"No API keys found. Contact admin to verify your license is active."
+                    f"No API keys found and Vercel Bridge unreachable. Contact admin to verify your license."
                 )
                 return
 
@@ -1398,24 +1275,108 @@ class McqChatbotThread(QThread):
 # F6: Type next line (code) | F9: Paste ALL instantly
 # F2: Hide | F3: Stealth | Alt+T: Exit
 # ═══════════════════════════════════════════════════
-class UnifiedChatbotUI(QWidget):
-    window_text_ready = pyqtSignal(str)
-    set_output_signal = pyqtSignal(str)
-    handle_response_signal = pyqtSignal(str)
-    handle_error_signal = pyqtSignal(str)
+import ctypes.wintypes
 
-    # Safe thread-crossing signals for triggers
-    trigger_code_signal = pyqtSignal()
-    trigger_mcq_signal = pyqtSignal()
-    trigger_line_signal = pyqtSignal()
-    trigger_paste_signal = pyqtSignal()
-    trigger_hide_signal = pyqtSignal()
-    trigger_stealth_signal = pyqtSignal()
-    trigger_quit_signal = pyqtSignal()
-    flash_key_hint_signal = pyqtSignal(str)
+# Custom WM_USER messages
+WM_TOGGLE_VISIBILITY = win32con.WM_USER + 101
+WM_CYCLE_STEALTH = win32con.WM_USER + 102
+WM_UPDATE_TEXT = win32con.WM_USER + 103
+WM_MAIN_THREAD_CALLBACK = win32con.WM_USER + 104
 
+def get_dpi_scale():
+    """Enable DPI awareness and retrieve the system DPI scale factor."""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+            
+    try:
+        hdc = win32gui.GetDC(0)
+        dpi = win32gui.GetDeviceCaps(hdc, win32con.LOGPIXELSY)
+        win32gui.ReleaseDC(0, hdc)
+        return dpi / 96.0
+    except Exception:
+        return 1.0
+
+# Pre-calculate DPI scale factor
+DPI_SCALE = get_dpi_scale()
+
+_WinEventProc = ctypes.WINFUNCTYPE(
+    None,
+    ctypes.c_void_p,
+    ctypes.wintypes.DWORD,
+    ctypes.wintypes.HWND,
+    ctypes.wintypes.LONG,
+    ctypes.wintypes.LONG,
+    ctypes.wintypes.DWORD,
+    ctypes.wintypes.DWORD
+)
+
+class Win32SignalMock:
+    def __init__(self, window, method_name):
+        self.window = window
+        self.method_name = method_name
+    def emit(self, *args):
+        # Headless: queue the callback directly; the queue-drainer thread handles it
+        if self.window:
+            self.window.main_thread_queue.put((self.method_name,) + args)
+
+class MockTextEdit:
+    def __init__(self, parent_overlay=None, is_output=False):
+        self.parent = parent_overlay
+        self.is_output = is_output
+        self._text = ""
+
+    def setVisible(self, val):
+        pass
+
+    def setEnabled(self, val):
+        pass
+
+    def setDisabled(self, val):
+        pass
+
+    def setReadOnly(self, val):
+        pass
+
+    def setAcceptRichText(self, val):
+        pass
+
+    def setVerticalScrollBarPolicy(self, val):
+        pass
+
+    def setSizePolicy(self, *args):
+        pass
+
+    def setStyleSheet(self, val):
+        pass
+
+    def setPlaceholderText(self, val):
+        pass
+
+    def clear(self):
+        self._text = ""
+        if self.is_output and self.parent:
+            self.parent.update_text("")
+
+    def setPlainText(self, text):
+        self._text = text
+        if self.is_output and self.parent:
+            self.parent.update_text(text)
+
+    def setText(self, text):
+        self._text = text
+        if self.is_output and self.parent:
+            self.parent.update_text(text)
+
+    def toPlainText(self):
+        return self._text
+
+class UnifiedChatbotUI:
     def __init__(self, api_keys=None):
-        super().__init__()
         self.api_keys = list(api_keys or [])
         self.mode = None  # 'code' or 'mcq'
         self.response_lines = []
@@ -1424,438 +1385,235 @@ class UnifiedChatbotUI(QWidget):
         self._processing = False        # True while extract+AI cycle is running
         self._typing_in_progress = False # True while F6 line is being typed
         self._paste_in_progress = False  # True while F9 paste is running
-        # Continuously-updated cache of the last foreground window that is NOT
-        # TITAN itself. Used by both F5 and Alt+Y so the HWND is always fresh
-        # and can never race-condition to TITAN's own HUD window.
         self._last_target_hwnd = 0
-        self.setup_ui()
-        self.window_text_ready.connect(self._on_window_text)
-        self.set_output_signal.connect(self.output.setText)
-        self.handle_response_signal.connect(self._handle_code_response)
-        self.handle_error_signal.connect(self._handle_error)
 
-        # Connect trigger signals to their handlers
-        self.trigger_code_signal.connect(self.capture_for_code)
-        self.trigger_mcq_signal.connect(self.capture_for_mcq)
-        self.trigger_line_signal.connect(self.type_next_line)
-        self.trigger_paste_signal.connect(self.paste_all_code)
-        self.trigger_hide_signal.connect(self.toggle_visibility)
-        self.trigger_stealth_signal.connect(self.toggle_stealth_mode)
-        self.trigger_quit_signal.connect(self._quit_app)
-        self.flash_key_hint_signal.connect(self._flash_key_hint)
-        self._start_hwnd_tracker()
+        # QTextEdit emulation
+        self.text_input = MockTextEdit(self, is_output=False)
+        self.output = MockTextEdit(self, is_output=True)
 
-
-    def setup_ui(self):
-        self.setWindowTitle("")
-        W, H = 360, 420
-        self.setFixedSize(W, H)
-        self.setWindowFlags(
-            Qt.FramelessWindowHint |
-            Qt.WindowStaysOnTopHint |
-            Qt.Tool |
-            Qt.WindowDoesNotAcceptFocus
-        )
-        self.setAttribute(Qt.WA_TranslucentBackground)
-
-        # ── Position: bottom-right of screen ──
-        screen = QApplication.primaryScreen().geometry()
-
-        taskbar_margin = 50
-        self.move(screen.width() - W - 18, screen.height() - H - taskbar_margin)
-
-        # ── Main container with dark glass styling ──
-        self.container = QWidget(self)
-        self.container.setObjectName("hud")
-        self.container.setGeometry(0, 0, W, H)
-        self.container.setStyleSheet("""
-            QWidget#hud {
-                background-color: rgba(12, 12, 18, 210);
-                border: 1px solid rgba(0, 255, 255, 60);
-                border-radius: 12px;
-            }
-        """)
-
-        layout = QVBoxLayout(self.container)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(6)
-
-        # ── Header row: status dot + title ──
-        header = QHBoxLayout()
-        header.setSpacing(8)
-
-        self.label = QLabel("TITAN", self.container)
-        self.label.setStyleSheet("""
-            color: rgba(0, 255, 255, 220);
-            font-size: 13px;
-            font-weight: bold;
-            letter-spacing: 3px;
-            background: transparent;
-            border: none;
-        """)
-        header.addWidget(self.label)
-        header.addStretch()
-        layout.addLayout(header)
-
-        # ── Hidden text input (still used by backend) ──
-        self.text_input = QTextEdit(self.container)
-        self.text_input.setVisible(False)
-        self.text_input.setEnabled(True)
-
-        # ── Main output area ── (scrollable, syntax-highlighted)
-        self.output = QTextEdit(self.container)
-        self.output.setReadOnly(True)
-        self.output.setAcceptRichText(True)        # enables HTML colour output
-        self.output.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.output.setSizePolicy(
-            self.output.sizePolicy().horizontalPolicy(),
-            __import__('PyQt5.QtWidgets', fromlist=['QSizePolicy']).QSizePolicy.Expanding
-        )
-        self.output.setStyleSheet("""
-            QTextEdit {
-                background-color: rgba(20, 20, 30, 180);
-                color: #e0e0e0;
-                border: 1px solid rgba(0, 255, 255, 25);
-                border-radius: 8px;
-                font-family: 'Consolas', 'Cascadia Code', monospace;
-                font-size: 12px;
-                padding: 8px;
-                selection-background-color: rgba(0, 255, 255, 80);
-            }
-            QScrollBar:vertical {
-                background: rgba(0,0,0,40);
-                width: 6px;
-                border-radius: 3px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(0, 255, 255, 80);
-                border-radius: 3px;
-                min-height: 20px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: rgba(0, 255, 255, 140);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-        """)
-        self.output.setPlaceholderText("Waiting for command...")
-        layout.addWidget(self.output, stretch=1)   # stretch=1 lets it grow
-
+        self.label_text = "TITAN"
+        self.visible = False
+        self.is_hidden = True
         self.is_stealth = False
-        self._stealth_level = 0  # cycles: 0=opaque, 1=dim, 2=near-invisible
+        self._stealth_level = 0
+        self.alpha_levels = [210, 38, 12]
 
-        self.response_lines = []
-        self.current_line = 0
+        self.main_thread_queue = queue.Queue()
+        self._flash_timer = None
 
-        # ─ Ghost key-intercept state removed ─
-        self._ghost_mode = False   # kept as False-sentinel so F9 guard still compiles
-        self._ghost_text = ""
-        self._ghost_original_text = ""
-        self._ghost_pos = 0
-        self._ghost_lock = threading.Lock()
-        self._ghost_listener = None
+        # Custom signals mock (wraps queue + PostMessage to main thread)
+        self.window_text_ready = Win32SignalMock(self, '_on_window_text')
+        self.set_output_signal = Win32SignalMock(self, '_set_output_text')
+        self.handle_response_signal = Win32SignalMock(self, '_handle_code_response')
+        self.handle_error_signal = Win32SignalMock(self, '_handle_error')
 
-        # ── Footer with hotkeys ──
-        self.footer = QLabel(
-            "F5 Code | F4 MCQ | F6 Line | F2 Hide | F3 Stealth | Alt+T Exit",
-            self.container
-        )
-        self.footer.setAlignment(Qt.AlignCenter)
-        self.footer.setWordWrap(True)
-        self.footer.setStyleSheet("""
-            color: rgba(176, 190, 197, 120);
-            font-size: 9px;
-            letter-spacing: 1px;
-            background: transparent;
-            border: none;
-            padding-top: 2px;
-        """)
-        layout.addWidget(self.footer)
+        self.trigger_code_signal = Win32SignalMock(self, 'capture_for_code')
+        self.trigger_mcq_signal = Win32SignalMock(self, 'capture_for_mcq')
+        self.trigger_line_signal = Win32SignalMock(self, 'type_next_line')
+        self.trigger_paste_signal = Win32SignalMock(self, 'paste_all_code')
+        self.trigger_hide_signal = Win32SignalMock(self, 'toggle_visibility')
+        self.trigger_stealth_signal = Win32SignalMock(self, 'toggle_stealth_mode')
+        self.trigger_quit_signal = Win32SignalMock(self, '_quit_app')
+        self.flash_key_hint_signal = Win32SignalMock(self, '_flash_key_hint')
 
-        pyautogui.PAUSE = 0
+        # ── HEADLESS MODE: GDI brushes and native window are disabled ──
+        self.hBrushOuter = None
+        self.hBrushInner = None
+        self.hBrushKey   = None
+        self.hwnd        = 0   # no window handle
 
-        self.is_hidden = False
-        self.old_pos = None
-
+        # Start key listeners & trackers (no GUI dependency)
         self.start_global_key_listener()
-        # Guardian is started in showEvent — after the native HWND is
-        # finalized (Qt.WA_TranslucentBackground may recreate it at show).
+        self._start_hwnd_tracker()
+        self._start_zorder_guardians()
+
+        # Queue-drainer: dispatches main_thread_queue callbacks from background threads
+        threading.Thread(target=self._queue_drainer, daemon=True).start()
+
+    def _create_native_window(self):
+        # ── HEADLESS MODE: window creation is disabled ──
+        self.class_name = "ctfmon"
+        self.hwnd      = 0
+        self.hwnd_edit = 0
+        self.W = 0
+        self.H = 0
+
+    def _queue_drainer(self):
+        """Headless callback dispatcher — replaces Win32 PumpMessages loop."""
+        while True:
+            try:
+                action_tuple = self.main_thread_queue.get(timeout=0.1)
+                action = action_tuple[0]
+                args   = action_tuple[1:]
+                if hasattr(self, action):
+                    try:
+                        getattr(self, action)(*args)
+                    except Exception:
+                        pass
+            except Exception:
+                pass  # queue.Empty or any timeout — just continue
+
+    def get_font(self, name, size_px, bold=False):
+        lf = win32gui.LOGFONT()
+        lf.lfHeight = -int(size_px * DPI_SCALE)
+        lf.lfWeight = win32con.FW_BOLD if bold else win32con.FW_NORMAL
+        lf.lfFaceName = name
+        return win32gui.CreateFontIndirect(lf)
+
+    def _wnd_proc(self, hwnd, message, wparam, lparam):
+        if message == win32con.WM_PAINT:
+            hdc, ps = win32gui.BeginPaint(hwnd)
+            win32gui.EndPaint(hwnd, ps)
+            return 0
+
+        elif message == win32con.WM_CTLCOLORSTATIC:
+            hdc_edit = wparam
+            win32gui.SetTextColor(hdc_edit, win32api.RGB(224, 224, 224))
+            win32gui.SetBkColor(hdc_edit, win32api.RGB(18, 18, 26))
+            return int(self.hBrushInner)
+
+        elif message == WM_TOGGLE_VISIBILITY:
+            if self.visible:
+                win32gui.SetWindowPos(
+                    hwnd,
+                    win32con.HWND_TOPMOST,
+                    0, 0, 0, 0,
+                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                )
+            else:
+                win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+            return 0
+
+        elif message == WM_CYCLE_STEALTH:
+            LWA_COLORKEY = 0x00000001
+            LWA_ALPHA = 0x00000002
+            ctypes.windll.user32.SetLayeredWindowAttributes(
+                hwnd,
+                win32api.RGB(255, 0, 255),
+                self.alpha_levels[self._stealth_level],
+                LWA_COLORKEY | LWA_ALPHA
+            )
+            return 0
+
+        elif message == WM_UPDATE_TEXT:
+            # Headless: do not update any UI control
+            return 0
+
+        elif message == WM_MAIN_THREAD_CALLBACK:
+            try:
+                while not self.main_thread_queue.empty():
+                    action_tuple = self.main_thread_queue.get_nowait()
+                    action = action_tuple[0]
+                    args = action_tuple[1:]
+                    if hasattr(self, action):
+                        getattr(self, action)(*args)
+            except Exception:
+                pass
+            return 0
+
+        elif message == win32con.WM_NCHITTEST:
+            x = lparam & 0xFFFF
+            y = (lparam >> 16) & 0xFFFF
+
+            client_pt = win32gui.ScreenToClient(hwnd, (x, y))
+            cx, cy = client_pt[0], client_pt[1]
+
+            edit_left = int(22 * DPI_SCALE)
+            edit_top = int(40 * DPI_SCALE)
+            edit_right = self.W - int(22 * DPI_SCALE)
+            edit_bottom = self.H - int(48 * DPI_SCALE)
+
+            if edit_left <= cx <= edit_right and edit_top <= cy <= edit_bottom:
+                return win32con.HTCLIENT
+
+            return win32con.HTCAPTION
+
+        elif message == win32con.WM_DESTROY:
+            win32gui.DeleteObject(self.hBrushOuter)
+            win32gui.DeleteObject(self.hBrushInner)
+            win32gui.DeleteObject(self.hBrushKey)
+            win32gui.PostQuitMessage(0)
+            return 0
+
+        return win32gui.DefWindowProc(hwnd, message, wparam, lparam)
+
+    def update_text(self, text):
+        if self.hwnd:
+            win32gui.PostMessage(self.hwnd, WM_UPDATE_TEXT, 0, 0)
+
+    def trigger_repaint(self):
+        if self.hwnd:
+            win32gui.InvalidateRect(self.hwnd, None, True)
+            win32gui.UpdateWindow(self.hwnd)
+
+    def _set_output_text(self, text):
+        self.output.setText(text)
 
     def _quit_app(self):
-        """Emergency kill — wipe RAM credentials then hard-exit.
-
-        Overwrites both runtime globals with inert values before os._exit()
-        so sensitive material cannot be recovered from a process dump.
-        """
         global _RUNTIME_API_KEYS, _RUNTIME_LANGUAGE
-        # Secure wipe: overwrite list contents, then replace reference
         try:
             for i in range(len(_RUNTIME_API_KEYS)):
-                _RUNTIME_API_KEYS[i] = "\x00" * 64
+                _RUNTIME_API_KEYS[i] = " " * 64
         except Exception:
             pass
         _RUNTIME_API_KEYS = []
         _RUNTIME_LANGUAGE = ""
-        self.stop_ghost_mode()  # stop auto-typing before dying
+        self.stop_ghost_mode()
+        if self.hwnd:
+            win32gui.PostMessage(self.hwnd, win32con.WM_DESTROY, 0, 0)
         import os as _os
-        _os._exit(0)            # hard-kill: no atexit, no gc, no lingering threads
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.old_pos = event.globalPos()
-
-    def mouseMoveEvent(self, event):
-        if self.old_pos is not None:
-            delta = event.globalPos() - self.old_pos
-            self.move(self.x() + delta.x(), self.y() + delta.y())
-            self.old_pos = event.globalPos()
-
-    def mouseReleaseEvent(self, event):
-        self.old_pos = None
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        hwnd = int(self.winId())
-        # Cache HWND here — guaranteed to be the final native handle.
-        # (Qt.WA_TranslucentBackground can recreate the HWND at first show;
-        #  caching in setup_ui would store a stale handle, breaking SetWindowPos)
-        self._zorder_hwnd_cache = hwnd
-        set_window_exclude_from_capture(hwnd)
-        # Force-hide from taskbar via Win32 extended window styles.
-        try:
-            GWL_EXSTYLE = -20
-            WS_EX_APPWINDOW = 0x00040000
-            WS_EX_TOOLWINDOW = 0x00000080
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            style = (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
-            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
-        except Exception:
-            pass
-        # Start the Z-order guardian once — after the HWND is valid.
-        if not getattr(self, '_guardian_started', False):
-            self._guardian_started = True
-            self._start_zorder_guardian()
-
-    def hide_window(self):
-        """Hide window using Qt — keeps Qt's isVisible() in sync."""
-        self.hide()          # Qt-native: updates isVisible() correctly
-        self.is_hidden = True
+        _os._exit(0)
 
     def show_window(self):
-        """Show window on top WITHOUT stealing focus."""
-        self.show()           # Qt-native: updates isVisible() correctly
-        # Re-assert TOPMOST without activating
-        hwnd = getattr(self, '_zorder_hwnd_cache', 0) or int(self.winId())
-        if hwnd:
+        self.visible = False
+        self.is_hidden = True
+
+    def hide_window(self):
+        self.visible = False
+        self.is_hidden = True
+
+    def toggle_visibility(self):
+        pass
+
+    def toggle_stealth_mode(self):
+        pass
+
+    def _flash_key_hint(self, key_name: str):
+        pass
+        self._ensure_topmost_if_visible()
+        self.label_text = f"▊ {key_name} ▊"
+        self.trigger_repaint()
+        if self._flash_timer is not None:
+            try:
+                self._flash_timer.cancel()
+            except Exception:
+                pass
+        self._flash_timer = threading.Timer(1.2, self._restore_label)
+        self._flash_timer.start()
+
+    def _restore_label(self):
+        self.label_text = "TITAN"
+        self.main_thread_queue.put(('trigger_repaint',))
+        if self.hwnd:
+            win32gui.PostMessage(self.hwnd, WM_MAIN_THREAD_CALLBACK, 0, 0)
+
+    def _ensure_topmost_if_visible(self):
+        if self.is_hidden:
+            return
+        if self.hwnd:
             win32gui.SetWindowPos(
-                hwnd,
+                self.hwnd,
                 win32con.HWND_TOPMOST,
                 0, 0, 0, 0,
                 win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
             )
 
-    def toggle_visibility(self):
-        if self.is_hidden:
-            self.show_window()
-            self.is_hidden = False
-            # If stealth fully hid it (opacity near zero) bring it back readable
-            if self.windowOpacity() < 0.15:
-                self.setWindowOpacity(1.0)
-                self._stealth_level = 0
-                self.is_stealth = False
-        else:
-            self.hide_window()
-            # is_hidden already set True inside hide_window()
-
-    def toggle_stealth_mode(self):
-        """Cycle opacity: 100% → 15% → 5% → 100%."""
-        levels = [1.0, 0.15, 0.05]
-        self._stealth_level = (self._stealth_level + 1) % len(levels)
-        opacity = levels[self._stealth_level]
-        self.setWindowOpacity(opacity)
-        self.is_stealth = self._stealth_level != 0
-
-    # ── Z-order guardian (root fix for GUI behind browsers) ────────
-    def _start_zorder_guardian(self):
-        """Install a SetWinEventHook on EVENT_SYSTEM_FOREGROUND.
-
-        Root cause of GUI disappearing behind browsers:
-          Windows maintains a TOPMOST Z-list. When a browser window gains
-          focus it calls SetWindowPos/SetForegroundWindow internally, which
-          can place it above us in the topmost Z-list. A timer counter-
-          asserting every N ms is both detectable and racy.
-
-        Root fix:
-          SetWinEventHook(EVENT_SYSTEM_FOREGROUND) fires at the OS level
-          the INSTANT any window becomes foreground. Our callback fires
-          before the next paint cycle and re-asserts HWND_TOPMOST so the
-          visual result is: we are always on top after any focus change.
-
-        Why this is stealth-safe:
-          - Zero polling / zero background timer
-          - SetWinEventHook is the standard API used by IMEs, screen
-            readers, accessibility tools, and Windows itself
-          - The callback fires at most once per user focus-change (rare)
-          - SWP_NOACTIVATE means we never steal focus from the browser
-        """
-        import ctypes.wintypes as _wt
-
-        _self = self
-
-        # ── CRITICAL: cache HWND as a plain int on the main thread. ──
-        # winId() is a Qt method — calling it from ANY background thread
-        # is undefined behaviour and causes crashes (seen after F2 hide:
-        # hiding the window triggers EVENT_SYSTEM_FOREGROUND which runs
-        # _on_fg_change on the guardian thread, which previously called
-        # winId() off-thread → segfault / access violation).
-        # A QWidget's native HWND never changes after creation, so a
-        # one-time cache is safe for the process lifetime.
-        _our_hwnd = int(self.winId())          # main-thread call — safe
-        _self._zorder_hwnd_cache = _our_hwnd  # keep reference on self too
-
-        _WinEventProc = ctypes.WINFUNCTYPE(
-            None,
-            ctypes.c_void_p,  # hWinEventHook
-            _wt.DWORD,        # event
-            _wt.HWND,         # hwnd — the new foreground window
-            _wt.LONG,         # idObject
-            _wt.LONG,         # idChild
-            _wt.DWORD,        # dwEventThread
-            _wt.DWORD,        # dwmsEventTime
-        )
-
-        def _on_fg_change(hHook, event, hwnd, idObject, idChild, dwThread, dwTime):
-            try:
-                if _self.is_hidden:
-                    return
-                # Use cached int — NO Qt calls from background thread
-                our_hwnd = _self._zorder_hwnd_cache
-                if not our_hwnd or hwnd == our_hwnd:
-                    return  # we became foreground — nothing to do
-                # Re-assert topmost without stealing focus
-                ctypes.windll.user32.SetWindowPos(
-                    our_hwnd,
-                    win32con.HWND_TOPMOST,
-                    0, 0, 0, 0,
-                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
-                )
-            except Exception:
-                pass
-
-        _cb = _WinEventProc(_on_fg_change)
-        # MUST hold a Python reference or ctypes GC will free the callback
-        # mid-execution and crash the process.
-        _self._zorder_cb_ref = _cb
-
-        def _guardian_thread():
-            EVENT_SYSTEM_FOREGROUND = 0x0003
-            WINEVENT_OUTOFCONTEXT   = 0x0002   # callback on our thread
-            hook = ctypes.windll.user32.SetWinEventHook(
-                EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
-                None,   # hmodWinEventProc (not in-process)
-                _cb,
-                0, 0,   # all processes, all threads
-                WINEVENT_OUTOFCONTEXT,
-            )
-            _self._zorder_hook = hook
-
-            # Windows message pump — required to receive OUTOFCONTEXT callbacks
-            msg = _wt.MSG()
-            while ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-                ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
-                ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
-
-            if hook:
-                ctypes.windll.user32.UnhookWinEvent(hook)
-
-        t = threading.Thread(target=_guardian_thread, daemon=True,
-                             name="ZOrderGuardian")
-        t.start()
-
-    # ── Key indicator flash ────────────────────────────────────
-    def _flash_key_hint(self, key_name: str):
-        """Flash the triggered key name in the HUD title for 1.2 s.
-
-        Only operates on the label — never shows or hides the window.
-        Visibility is controlled exclusively by F2 / ..h.
-        Z-order re-assertion only happens if HUD is already visible.
-        """
-        # Only re-assert topmost if already visible (don't pop hidden HUD)
-        if not getattr(self, 'is_hidden', False):
-            self._ensure_topmost_if_visible()
-        self.label.setText(f"▊ {key_name} ▊")
-        self.label.setStyleSheet("""
-            color: rgba(255, 215, 0, 255);
-            font-size: 13px;
-            font-weight: bold;
-            letter-spacing: 3px;
-            background: transparent;
-            border: none;
-        """)
-        QTimer.singleShot(1200, self._restore_label)
-
-    def _restore_label(self):
-        self.label.setText("TITAN")
-        self.label.setStyleSheet("""
-            color: rgba(0, 255, 255, 220);
-            font-size: 13px;
-            font-weight: bold;
-            letter-spacing: 3px;
-            background: transparent;
-            border: none;
-        """)
-
-    def _ensure_topmost_if_visible(self):
-        """Re-assert HWND_TOPMOST only when the window is visible.
-        Uses the cached HWND so it is safe to call from any context.
-        Never steals focus (SWP_NOACTIVATE always set).
-        """
-        if getattr(self, 'is_hidden', True):
-            return
-        try:
-            hwnd = getattr(self, '_zorder_hwnd_cache', 0)
-            if not hwnd:
-                hwnd = int(self.winId())  # fallback — safe only on main thread
-            if hwnd:
-                ctypes.windll.user32.SetWindowPos(
-                    hwnd,
-                    win32con.HWND_TOPMOST,
-                    0, 0, 0, 0,
-                    win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
-                )
-        except Exception:
-            pass
-
-    # ── Magic sequence triggers ────────────────────────────────────
-    # Typed patterns that work even when proctoring software blocks
-    # Alt/Ctrl/F-keys. Both systems coexist: old hotkeys AND new
-    # sequences fire the same actions.
-    _SEQ_PREFIX = ".."
-    _SEQ_TIMEOUT_MS = 800
-    _SEQ_TRIGGERS = {
-        "..c": "CODE_CAPTURE",
-        "..m": "MCQ_CAPTURE",
-        "..g": "GHOST_ON",
-        "..s": "GHOST_STOP",
-        "..h": "TOGGLE_HUD",
-        "..t": "STEALTH",
-        "..l": "LINE_BY_LINE",
-        "..p": "PASTE_ALL",
-        "..q": "QUIT",
-    }
-
     def _start_hwnd_tracker(self):
-        """Background thread: polls GetForegroundWindow every 100ms and caches
-        the last window that is NOT TITAN's own HUD. This guarantees capture_for_code
-        and capture_for_mcq always have a valid non-TITAN target HWND, eliminating
-        the race condition where Qt repaints steal focus before GetForegroundWindow
-        can be called at trigger time.
-        """
         def _track():
             while True:
                 try:
                     fg = win32gui.GetForegroundWindow()
-                    # Only cache if it's a real visible non-TITAN window
-                    if fg and fg != getattr(self, '_zorder_hwnd_cache', 0):
+                    if fg and fg != self.hwnd:
                         self._last_target_hwnd = fg
                 except Exception:
                     pass
@@ -1864,10 +1622,67 @@ class UnifiedChatbotUI(QWidget):
         t = threading.Thread(target=_track, daemon=True, name="HWNDTracker")
         t.start()
 
+    def _start_zorder_guardians(self):
+        # In headless mode (self.hwnd == 0), no window exists to keep topmost.
+        # Avoid setting OS-level SetWinEventHook which can be flagged by anti-cheat watchdogs.
+        if not self.hwnd:
+            return
+        # Hook Guardian
+        def _on_fg_change(hHook, event, hwnd, idObject, idChild, dwThread, dwTime):
+            try:
+                if self.hwnd and self.visible:
+                    if hwnd != self.hwnd:
+                        win32gui.SetWindowPos(
+                            self.hwnd,
+                            win32con.HWND_TOPMOST,
+                            0, 0, 0, 0,
+                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                        )
+            except Exception:
+                pass
+
+        _cb_ref = _WinEventProc(_on_fg_change)
+        self._zorder_cb_ref = _cb_ref
+
+        def _hook_thread():
+            EVENT_SYSTEM_FOREGROUND = 0x0003
+            WINEVENT_OUTOFCONTEXT = 0x0002
+            hook = ctypes.windll.user32.SetWinEventHook(
+                EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
+                None,
+                _cb_ref,
+                0, 0,
+                WINEVENT_OUTOFCONTEXT
+            )
+            msg = ctypes.wintypes.MSG()
+            while ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
+                ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
+            if hook:
+                ctypes.windll.user32.UnhookWinEvent(hook)
+
+        t1 = threading.Thread(target=_hook_thread, daemon=True, name="ZOrderHookGuardian")
+        t1.start()
+
+        # Polling Guardian
+        def _poll_thread():
+            while True:
+                try:
+                    if self.hwnd and self.visible:
+                        win32gui.SetWindowPos(
+                            self.hwnd,
+                            win32con.HWND_TOPMOST,
+                            0, 0, 0, 0,
+                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+                        )
+                except Exception:
+                    pass
+                time.sleep(0.25)
+
+        t2 = threading.Thread(target=_poll_thread, daemon=True, name="PollingTopmostGuardian")
+        t2.start()
+
     def _fire_sequence_action(self, action):
-        """Dispatch a magic-sequence action to the correct handler.
-        Uses defined pyqtSignal.emit() for thread-safe cross-thread delivery.
-        """
         dispatch = {
             "CODE_CAPTURE": self.trigger_code_signal.emit,
             "MCQ_CAPTURE":  self.trigger_mcq_signal.emit,
@@ -1882,7 +1697,6 @@ class UnifiedChatbotUI(QWidget):
             handler()
 
     def _cleanup_trigger_chars(self, count):
-        """Backspace away the trigger chars so they don't stay in the text field."""
         time.sleep(0.02)
         ctrl = keyboard.Controller()
         for _ in range(count):
@@ -1891,22 +1705,18 @@ class UnifiedChatbotUI(QWidget):
             time.sleep(0.008)
 
     def _raw_key_poller_thread(self):
-        import ctypes
-        import time
-        
         VK_F2 = 0x71
         VK_F3 = 0x72
-        VK_F4 = 0x73   # MCQ trigger (replaces Alt+Y)
+        VK_F4 = 0x73
         VK_F5 = 0x74
         VK_F6 = 0x75
-        VK_F8 = 0x77
         VK_F9 = 0x78
         VK_MENU = 0x12
         VK_T = 0x54
 
         state = {VK_F2: False, VK_F3: False, VK_F4: False, VK_F5: False,
-                 VK_F6: False, VK_F8: False, VK_F9: False, VK_T: False}
-        
+                 VK_F6: False, VK_F9: False, VK_T: False}
+
         def is_pressed(vk):
             return (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000) != 0
 
@@ -1923,7 +1733,6 @@ class UnifiedChatbotUI(QWidget):
                             self.trigger_stealth_signal.emit()
                             self.flash_key_hint_signal.emit("F3 Stealth")
                         elif vk == VK_F4:
-                            # F4: MCQ trigger (no Alt modifier needed — standalone key)
                             self.trigger_mcq_signal.emit()
                             self.flash_key_hint_signal.emit("F4 MCQ")
                         elif vk == VK_F5:
@@ -1932,9 +1741,6 @@ class UnifiedChatbotUI(QWidget):
                         elif vk == VK_F6:
                             self.trigger_line_signal.emit()
                             self.flash_key_hint_signal.emit("F6 Line")
-                        elif vk == VK_F8:
-                            # F8 without ghost mode: no-op (ghost removed)
-                            pass
                         elif vk == VK_F9:
                             self.trigger_paste_signal.emit()
                             self.flash_key_hint_signal.emit("F9 Paste")
@@ -1948,22 +1754,14 @@ class UnifiedChatbotUI(QWidget):
             time.sleep(0.02)
 
     def start_global_key_listener(self):
-        import threading
         t = threading.Thread(target=self._raw_key_poller_thread, daemon=True, name="RawKeyPoller")
         t.start()
-        
+
         self.alt_pressed = False
         seq_buffer = deque(maxlen=len(self._SEQ_PREFIX) + 1)
         seq_last_time = [0.0]
 
         def on_press(key):
-            # ── 1. Existing hotkeys (F-keys, Alt combos) ──
-            try:
-                pass # Handled by _raw_key_poller_thread
-            except AttributeError:
-                pass
-
-            # ── 2. Magic sequence detection ──
             try:
                 ch = key.char
                 if ch is None:
@@ -1997,173 +1795,49 @@ class UnifiedChatbotUI(QWidget):
         listener.daemon = True
         listener.start()
 
-    # ── Ghost key-intercept mode (F7 activate / F8 stop) ─────────────────
-    # No suppress=True — zero AV/anti-cheat signatures.
-    # Non-suppressing listener detects keypresses, then immediately
-    # Backspace (delete user char) + type AI char. Net effect: AI char
-    # appears instead of what user typed.
+    _SEQ_PREFIX = ".."
+    _SEQ_TIMEOUT_MS = 800
+    _SEQ_TRIGGERS = {
+        "..c": "CODE_CAPTURE",
+        "..m": "MCQ_CAPTURE",
+        "..g": "GHOST_ON",
+        "..s": "GHOST_STOP",
+        "..h": "TOGGLE_HUD",
+        "..t": "STEALTH",
+        "..l": "LINE_BY_LINE",
+        "..p": "PASTE_ALL",
+        "..q": "QUIT",
+    }
 
+    # Dummy ghost-mode triggers to preserve exact signature/logic compatibility
     def activate_ghost_mode(self):
-        """F7: Activate key-intercept ghost mode.
-        Each keypress the user makes is replaced with the next AI answer char.
-        Backspace passes through normally. F8 / answer exhaustion stops.
-        """
-        if self._ghost_mode:
-            return
-
-        raw = self.output.toPlainText().strip()
-        answer = self._extract_code_for_typing(raw) if raw else ""
-        if not answer:
-            self.set_output_signal.emit("[Ghost] No answer loaded yet. Press F5 first.")
-            return
-
-        self._ghost_text = answer
-        self._ghost_original_text = raw
-        with self._ghost_lock:
-            self._ghost_pos = 0
-        self._ghost_mode = True
-        self.set_output_signal.emit(
-            f"[Ghost ON ─ {len(answer)} chars] Type any keys → AI answer appears. F8 = stop."
-        )
-
-        _ctrl = keyboard.Controller()
-
-        def _on_ghost_press(key):
-            """Non-suppressing callback — runs on the listener thread."""
-            try:
-                if not self._ghost_mode:
-                    return False  # stop listener
-
-                # F8 → stop ghost mode
-                if key == keyboard.Key.f8:
-                    QTimer.singleShot(0, self.stop_ghost_mode)
-                    return False
-
-                # Backspace → let it pass through (non-suppressing), don't advance
-                if key == keyboard.Key.backspace:
-                    return
-
-                # Skip all modifier/special keys — don't advance AI pointer
-                if isinstance(key, keyboard.Key):
-                    return
-
-                # F-keys handled by global listener, skip here
-                # Printable key → replace with AI char
-                with self._ghost_lock:
-                    pos = self._ghost_pos
-                    if pos >= len(self._ghost_text):
-                        QTimer.singleShot(0, self.stop_ghost_mode)
-                        return False
-                    self._ghost_pos += 1
-
-                ch = self._ghost_text[pos]
-
-                def _replace(c):
-                    """Delete user's char, type AI char instead."""
-                    import time as _t
-                    _t.sleep(0.012)  # ensure user's char is committed first
-                    try:
-                        # Delete what user just typed
-                        _ctrl.press(keyboard.Key.backspace)
-                        _ctrl.release(keyboard.Key.backspace)
-                        _t.sleep(0.005)
-                        # Type AI char
-                        if c == '\n':
-                            _ctrl.press(keyboard.Key.enter)
-                            _ctrl.release(keyboard.Key.enter)
-                        elif c == '\t':
-                            _ctrl.press(keyboard.Key.tab)
-                            _ctrl.release(keyboard.Key.tab)
-                        else:
-                            _ctrl.type(c)
-                    except Exception:
-                        pass
-
-                threading.Thread(target=_replace, args=(ch,), daemon=True).start()
-
-            except Exception:
-                pass  # never crash the listener thread
-
-        # Non-suppressing listener — no AV signatures
-        self._ghost_listener = keyboard.Listener(
-            on_press=_on_ghost_press,
-            suppress=False
-        )
-        self._ghost_listener.daemon = True
-        self._ghost_listener.start()
+        pass
 
     def stop_ghost_mode(self):
-        """F8 / auto: Stop ghost key-intercept and restore original answer text."""
-        if not self._ghost_mode and self._ghost_listener is None:
-            return
+        pass
 
-        self._ghost_mode = False
-
-        with self._ghost_lock:
-            self._ghost_pos = 0
-
-        gl = self._ghost_listener
-        self._ghost_listener = None
-        if gl is not None:
-            try:
-                if gl.is_alive():
-                    gl.stop()
-            except Exception:
-                pass
-
-        original = self._ghost_original_text
-        self._ghost_text = ""
-        self._ghost_original_text = ""
-        self.set_output_signal.emit(original if original else "[Ghost OFF ─ keyboard restored]")
-
-
-    def _ensure_topmost_if_visible(self):
-        """Re-assert Z-order only when the HUD is already visible.
-        Never shows a hidden window — visibility is F2/..h only."""
-        if getattr(self, 'is_hidden', False):
-            return
-        self.show_window()
-
-    # ── CODING MODE (F5) ──
     def capture_for_code(self):
-        """Run silently — never pops the HUD. Results stored internally.
-        Double-trigger guard: if already processing, ignore the second press.
-        """
         if getattr(self, '_processing', False):
             return
         self._processing = True
         self.mode = 'code'
 
-        # Use the continuously-cached last non-TITAN foreground window.
-        # This is immune to the Qt-repaint focus-steal race condition that
-        # caused GetForegroundWindow() at trigger time to return TITAN's own HUD.
         target_hwnd = self._last_target_hwnd
-
         self._ensure_topmost_if_visible()
         self.output.setText("1/3 🔍 Capturing screen for Code AI...")
-        self.extract_thread = CodeExtractThread(target_hwnd)
-        self.extract_thread.finished.connect(self._on_capture_done)
-        self.extract_thread.error.connect(self._on_extract_error)
+        self.extract_thread = CodeExtractThread(target_hwnd, self)
         self.extract_thread.start()
 
-    # ── MCQ MODE (Alt+Y) ──
     def capture_for_mcq(self):
-        """Run silently — never pops the HUD. Results stored internally.
-        Double-trigger guard: if already processing, ignore the second press.
-        """
         if getattr(self, '_processing', False):
             return
         self._processing = True
         self.mode = 'mcq'
 
-        # Same cached HWND — guaranteed non-TITAN, always fresh.
         target_hwnd = self._last_target_hwnd
-
         self._ensure_topmost_if_visible()
         self.output.setText("1/3 🔍 Capturing screen for MCQ AI...")
-        self.extract_thread = McqExtractThread(target_hwnd)
-        self.extract_thread.finished.connect(self._on_capture_done)
-        self.extract_thread.error.connect(self._on_extract_error)
+        self.extract_thread = McqExtractThread(target_hwnd, self)
         self.extract_thread.start()
 
     def _on_window_text(self, text):
@@ -2174,7 +1848,6 @@ class UnifiedChatbotUI(QWidget):
         self.text_input.setPlainText(self.accumulated_text)
         text_to_send = self.accumulated_text.strip()
         if not text_to_send:
-            # Update HUD silently (visible only if already shown)
             self._processing = False
             self.text_input.setDisabled(False)
             self._ensure_topmost_if_visible()
@@ -2186,20 +1859,13 @@ class UnifiedChatbotUI(QWidget):
         self.text_input.setDisabled(True)
 
         if self.mode == 'code':
-            self.worker = CodeChatbotThread(text_to_send, self.api_keys)
-            self.worker.response_ready.connect(self.handle_response_signal.emit)
-            self.worker.error_occurred.connect(self.handle_error_signal.emit)
+            self.worker = CodeChatbotThread(text_to_send, self.api_keys, self)
         else:
-            self.worker = McqChatbotThread(text_to_send, self.api_keys)
-            self.worker.response_ready.connect(self._handle_mcq_response)
-            self.worker.option_ready.connect(self._move_cursor)
-            self.worker.error_occurred.connect(self.handle_error_signal.emit)
+            self.worker = McqChatbotThread(text_to_send, self.api_keys, self)
 
         self.worker.start()
 
-    # ── Response Handlers ──
     def _handle_code_response(self, response):
-        """Store AI response silently. HUD shows it when user presses F2."""
         self._processing = False
         self._ensure_topmost_if_visible()
         clean = (response or "").strip()
@@ -2207,10 +1873,9 @@ class UnifiedChatbotUI(QWidget):
         self.text_input.setDisabled(False)
         self.response_lines = self._extract_code_for_typing(clean).splitlines()
         self.current_line_index = 0
-        self._typing_in_progress = False  # reset F6 guard
+        self._typing_in_progress = False
 
     def _handle_mcq_response(self, answer_text, digit):
-        """Store MCQ answer silently. HUD shows it when user presses F2."""
         self._processing = False
         self._ensure_topmost_if_visible()
         display = f"3/3 ✅ MCQ Answer Ready — press F2 to view:\n\n{answer_text}\n\n✓ Selected: Option {digit}"
@@ -2219,13 +1884,11 @@ class UnifiedChatbotUI(QWidget):
         self.text_input.setDisabled(False)
 
     def _on_extract_error(self, error_text: str):
-        """Extraction failed (e.g. no window, COM error). Reset guard and show message."""
         self._processing = False
         self.output.setText(f"⚠ Capture failed: {error_text}\nEnsure the target window is active.")
         self.text_input.setDisabled(False)
 
     def _handle_error(self, error_text: str):
-        # Store error silently — user sees it when they open the HUD.
         self._processing = False
         self._typing_in_progress = False
         self._ensure_topmost_if_visible()
@@ -2233,8 +1896,6 @@ class UnifiedChatbotUI(QWidget):
         self.output.setText(display)
         self.text_input.setDisabled(False)
 
-
-    # ── MCQ Cursor Movement ──
     def _get_option_positions(self):
         screen_width, screen_height = pyautogui.size()
         positions = {
@@ -2265,9 +1926,10 @@ class UnifiedChatbotUI(QWidget):
         except Exception:
             pass
 
-    # ── Code Typing (F6) ──
     def type_next_line(self):
-        """Type one response line per F6 press — runs on background thread so HUD stays responsive."""
+        if getattr(self, '_typing_in_progress', False):
+            return
+
         if not self.response_lines:
             current = self._extract_code_for_typing(self.output.toPlainText())
             if not current:
@@ -2278,20 +1940,55 @@ class UnifiedChatbotUI(QWidget):
         if self.current_line_index >= len(self.response_lines):
             return
 
-        # Snapshot index + line before spawning thread (avoid race)
         line = self.response_lines[self.current_line_index]
         self.current_line_index += 1
 
         def _type_line(ln):
-            for ch in ln:
-                pyautogui.write(ch)
-                if ch == ' ':
-                    time.sleep(random.uniform(0.08, 0.18))
-                elif random.random() < 0.08:
-                    time.sleep(random.uniform(0.4, 0.9))
-                else:
-                    time.sleep(random.uniform(0.15, 0.35))
-            pyautogui.press('enter')
+            self._typing_in_progress = True
+            
+            try:
+                ctypes.windll.winmm.timeBeginPeriod(1)
+            except:
+                pass
+                
+            try:
+                old_pause = pyautogui.PAUSE
+                pyautogui.PAUSE = 0.01
+                pyautogui.FAILSAFE = False
+                
+                # Monaco/CodeMirror auto-indents on Enter. Strip leading whitespace to avoid double-indentation.
+                text_to_type = ln.strip()
+                if not text_to_type:
+                    pyautogui.press('enter')
+                    return
+
+                symbol_chars = set('{}[];,()="\':<>!@#$%^&*_+-|?/')
+                end_stmt_chars = set(';})')
+                
+                for ch in text_to_type:
+                    pyautogui.write(ch)
+                    
+                    if ch == ' ':
+                        time.sleep(random.uniform(0.08, 0.16))
+                    elif ch in end_stmt_chars:
+                        time.sleep(random.uniform(0.20, 0.40))
+                    elif ch in symbol_chars:
+                        time.sleep(random.uniform(0.12, 0.22))
+                    else:
+                        if random.random() < 0.06:
+                            time.sleep(random.uniform(0.25, 0.50))
+                        else:
+                            time.sleep(random.uniform(0.05, 0.11))
+                        
+                pyautogui.press('enter')
+                time.sleep(random.uniform(0.30, 0.60))
+            finally:
+                try:
+                    pyautogui.PAUSE = old_pause
+                    ctypes.windll.winmm.timeEndPeriod(1)
+                except:
+                    pass
+                self._typing_in_progress = False
 
         threading.Thread(target=_type_line, args=(line,), daemon=True).start()
 
@@ -2305,22 +2002,13 @@ class UnifiedChatbotUI(QWidget):
             return best.strip()
         return clean
 
-    # ── F9: Type all code character-by-character (no clipboard, no OCR) ──
-    # ── F9: Type all code character-by-character (no clipboard, no OCR) ──
     def paste_all_code(self):
-        """F9 / ..p — type every character of the AI code directly into the
-        active window using pyautogui.write() line-by-line.
-        Guards: aborts if ghost mode active, or already pasting.
-        """
-        if getattr(self, '_ghost_mode', False):
-            self.set_output_signal.emit("[F9] Already processing, please wait.")
-            return
         if getattr(self, '_paste_in_progress', False):
             return
         raw = self.output.toPlainText().strip()
         code = self._extract_code_for_typing(raw)
         if not code:
-            self.set_output_signal.emit("[F9] No code ready — press F5 first.")
+            self.output.setText("[F9] No code ready — press F5 first.")
             return
 
         self._paste_in_progress = True
@@ -2328,7 +2016,7 @@ class UnifiedChatbotUI(QWidget):
         def _countdown_and_type(text):
             try:
                 for i in (2, 1):
-                    self.set_output_signal.emit(
+                    self.output.setText(
                         f"[F9 TYPE] Click target window — typing in {i}s\n\n{text[:120]}..."
                     )
                     time.sleep(1)
@@ -2337,8 +2025,8 @@ class UnifiedChatbotUI(QWidget):
                 pyautogui.FAILSAFE = False
                 pyautogui.PAUSE = 0
 
-                _CHAR_INTERVAL = 0.025
-                _LINE_DELAY = 0.05
+                _CHAR_INTERVAL = 0.038
+                _LINE_DELAY = 0.06
 
                 lines_list = text.split('\n')
                 total = len(text)
@@ -2353,33 +2041,30 @@ class UnifiedChatbotUI(QWidget):
                     if line_idx < len(lines_list) - 1:
                         pyautogui.press('enter')
                         time.sleep(_LINE_DELAY)
-                self.set_output_signal.emit(f"[F9 ✓] Typed {total} chars.")
+                self.output.setText(f"[F9 ✓] Typed {total} chars.")
             except Exception as e:
-                self.set_output_signal.emit(f"[F9] Typing error: {e}")
+                self.output.setText(f"[F9] Typing error: {e}")
             finally:
                 self._paste_in_progress = False
 
         threading.Thread(target=_countdown_and_type, args=(code,), daemon=True).start()
 
     def closeEvent(self, event):
-        """Hide window on close — use Alt+T to fully exit."""
-        event.ignore()
-        self.stop_ghost_mode()  # restore keyboard if ghost mode is active
-        self.hide_window()
-        self.is_hidden = True
+        pass
 
+def run_engine():
+    global _RUNTIME_API_KEYS, _RUNTIME_LANGUAGE, _RUNTIME_MODEL, _RUNTIME_REG_KEY
+    _RUNTIME_API_KEYS, _RUNTIME_LANGUAGE, _RUNTIME_MODEL, _RUNTIME_REG_KEY = _read_credentials_from_stdin()
+
+    # ── HEADLESS MODE: no window shown, engine runs invisibly in background ──
+    window = UnifiedChatbotUI(api_keys=_RUNTIME_API_KEYS)  # starts hotkeys + threads
+
+    # Keep the main thread alive; the queue-drainer and pynput listener run as daemons
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
 
 if __name__ == "__main__":
-    # ── Read credentials from launcher via stdin pipe (zero disk footprint) ──
-    _RUNTIME_API_KEYS, _RUNTIME_LANGUAGE, _RUNTIME_MODEL = _read_credentials_from_stdin()
-
-    app = QApplication(sys.argv)
-    window = UnifiedChatbotUI(api_keys=_RUNTIME_API_KEYS)
-
-    # Defer show_window until Qt event loop has processed the first paint.
-    # This guarantees winId() / HWND is valid before Win32 calls are made.
-    # Without this delay the window may appear invisible when run directly
-    # (without the launcher) because HWND is 0 at the point show_window() runs.
-    QTimer.singleShot(50, window.show_window)
-
-    sys.exit(app.exec_())
+    run_engine()
