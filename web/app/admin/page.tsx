@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   verifyAdminPassword,
   fetchAllLicenses,
@@ -163,7 +164,7 @@ export default function AdminPage() {
 
 
 
-type Page = "overview"|"keyvault"|"audit"|"api"|"support"|"security"|"apikeypool"|"docs";
+type Page = "overview"|"keyvault"|"audit"|"api"|"support"|"security"|"apikeypool"|"docs"|"history";
 
 function StatCard({label,value,delta,deltaLabel,color,icon,cls}:{label:string;value:number|string;delta:string;deltaLabel:string;color:"success"|"error"|"warning";icon:string;cls?:string}) {
   const c={success:{t:"text-success",b:"bg-success/10",bar:"bg-success"},error:{t:"text-error",b:"bg-error/10",bar:"bg-error"},warning:{t:"text-warning",b:"bg-warning/10",bar:"bg-warning"}}[color];
@@ -720,6 +721,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const nav: {id:Page;icon:string;label:string}[] = [
     {id:"overview",icon:"dashboard",label:"Overview"},
     {id:"keyvault",icon:"vpn_key",label:"Key Vault"},
+    {id:"history",icon:"monitoring",label:"Token History"},
     {id:"apikeypool",icon:"dataset",label:"API Key Pool"},
     {id:"audit",icon:"history",label:"Audit Logs"},
     {id:"api",icon:"api",label:"API Access"},
@@ -729,6 +731,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
 
   function navigate(p:Page) {
     if (p === "docs") { router.push("/docs"); return; }
+    if (p === "history") { router.push("/history"); return; }
     setPage(p);
   }
 
@@ -757,6 +760,14 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         <span className="lg:hidden text-[10px] uppercase tracking-widest text-on-surface-variant/60 font-semibold ml-1 truncate min-w-0 flex-shrink">{page}</span>
         <div className="flex-1"/>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <Link
+            href="/history"
+            className="border border-primary/30 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 md:px-3.5 py-1.5 md:py-2 rounded-lg text-xs font-bold flex items-center gap-1 md:gap-1.5 transition-all cursor-pointer flex-shrink-0"
+            title="View Token Telemetry & Request History"
+          >
+            <span className="material-symbols-outlined text-[16px] md:text-[18px]">monitoring</span>
+            <span className="hidden sm:inline">Token History</span>
+          </Link>
           <button onClick={()=>setShowModal(true)} className="bg-primary text-on-primary px-2.5 md:px-4 py-1.5 md:py-2 rounded-lg text-xs font-bold flex items-center gap-1 md:gap-1.5 hover:brightness-110 active:scale-95 transition-all cursor-pointer flex-shrink-0" style={{boxShadow:"0 0 20px rgba(181,196,255,0.2)"}}>
             <span className="material-symbols-outlined text-[16px] md:text-[18px]">add</span><span className="hidden sm:inline">Add Key</span>
           </button>
@@ -835,6 +846,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         {[
           {id:"overview" as Page,icon:"dashboard",label:"Overview"},
           {id:"keyvault" as Page,icon:"vpn_key",label:"Vault"},
+          {id:"history" as Page,icon:"monitoring",label:"History"},
           {id:"audit" as Page,icon:"history",label:"Audit"},
           {id:"apikeypool" as Page,icon:"dataset",label:"Pool"},
           {id:"security" as Page,icon:"shield",label:"Security"},
