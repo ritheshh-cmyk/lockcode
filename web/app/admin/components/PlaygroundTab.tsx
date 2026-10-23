@@ -134,7 +134,7 @@ export function PlaygroundTab({ licenses = [] }: PlaygroundTabProps) {
                     setMode(s.mode);
                     setLanguage(s.lang);
                   }}
-                  className="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-[10px] text-[#86868b] hover:text-white transition-colors"
+                  className="px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-[10px] text-[#86868b] hover:text-white transition-all ios-press-subtle border border-white/[0.06]"
                 >
                   {s.label}
                 </button>
@@ -224,7 +224,7 @@ export function PlaygroundTab({ licenses = [] }: PlaygroundTabProps) {
           <button
             onClick={handleRun}
             disabled={loading || !prompt.trim()}
-            className="w-full apple-btn-primary py-3 text-xs font-semibold flex items-center justify-center space-x-2 shadow-lg shadow-[#0a84ff]/25 disabled:opacity-50"
+            className="w-full apple-btn-primary py-3 text-xs font-semibold flex items-center justify-center space-x-2 shadow-lg shadow-[#0a84ff]/25 disabled:opacity-50 ios-press"
           >
             {loading ? (
               <>

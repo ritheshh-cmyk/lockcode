@@ -68,7 +68,8 @@ export function CupertinoTabs({
 
   const updatePill = useCallback(() => {
     const activeEl = tabRefs.current[activeTab];
-    if (activeEl && containerRef.current) {
+    const containerEl = containerRef.current;
+    if (activeEl && containerEl && activeEl.offsetWidth > 0) {
       setIndicator({
         left: activeEl.offsetLeft,
         width: activeEl.offsetWidth,
@@ -79,9 +80,21 @@ export function CupertinoTabs({
 
   useEffect(() => {
     updatePill();
+    const raf = requestAnimationFrame(() => updatePill());
     const handleResize = () => updatePill();
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (containerRef.current && typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => updatePill());
+      resizeObserver.observe(containerRef.current);
+    }
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", handleResize);
+      if (resizeObserver) resizeObserver.disconnect();
+    };
   }, [updatePill]);
 
   const handleTabClick = (tabId: ControlCenterTab) => {
@@ -123,9 +136,9 @@ export function CupertinoTabs({
                 tabRefs.current[tab.id] = el;
               }}
               onClick={() => handleTabClick(tab.id)}
-              className={`relative z-10 flex-1 min-w-[140px] sm:min-w-[160px] py-2.5 px-3 rounded-xl flex items-center justify-center space-x-2 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ios-press ${
+              className={`relative z-10 flex-1 min-w-[135px] sm:min-w-[155px] py-2.5 px-3 rounded-xl flex items-center justify-center space-x-2 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ios-press ${
                 isActive
-                  ? "text-white"
+                  ? `text-white ${!indicator.ready ? "bg-white/[0.12] border border-white/[0.15]" : ""}`
                   : "text-[#86868b] hover:text-[#f5f5f7] hover:bg-white/[0.03]"
               }`}
             >

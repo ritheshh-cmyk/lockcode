@@ -768,218 +768,228 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
 
       {/* ── 4. Apple Glass Modal: Add / Edit AI Provider ── */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl animate-fade-in">
-          <div className="relative w-full max-w-lg rounded-3xl bg-[#1c1c1e]/90 border border-white/[0.12] shadow-2xl shadow-black/80 p-6 sm:p-8 backdrop-blur-2xl">
-            <div className="flex items-center justify-between pb-4 border-b border-white/[0.08] mb-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-2xl animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-w-xl max-h-[90vh] flex flex-col rounded-3xl bg-[#1c1c1e] border border-white/[0.14] shadow-2xl shadow-black/90 backdrop-blur-3xl ios-modal-enter my-auto overflow-hidden">
+            {/* Pinned Modal Header */}
+            <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-white/[0.08] bg-white/[0.02]">
               <div className="flex items-center space-x-2.5">
                 <div className="w-8 h-8 rounded-xl bg-[#0a84ff]/20 text-[#0a84ff] border border-[#0a84ff]/30 flex items-center justify-center">
                   <span className="material-symbols-outlined text-[18px]">neurology</span>
                 </div>
-                <h3 className="text-base font-semibold text-white tracking-tight">
-                  {editingProvider ? "Edit AI Provider" : "Connect AI Provider to Brain"}
-                </h3>
+                <div>
+                  <h3 className="text-sm sm:text-base font-semibold text-white tracking-tight">
+                    {editingProvider ? "Edit AI Provider" : "Connect AI Provider to Brain"}
+                  </h3>
+                  <p className="text-[11px] text-[#86868b]">Configure endpoint credentials and dynamic cascade routing.</p>
+                </div>
               </div>
               <button
+                type="button"
                 onClick={() => setModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.1] text-[#86868b] hover:text-white flex items-center justify-center transition-colors"
+                className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#86868b] hover:text-white flex items-center justify-center transition-colors ios-press-subtle"
+                title="Close dialog"
               >
                 <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="space-y-5">
-              {/* Preset Selector */}
-              <div>
-                <label className="block text-xs font-medium text-[#86868b] mb-2">
-                  Provider Ecosystem Preset
-                </label>
-                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                  {Object.entries(presets).map(([key, val]) => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => handleSelectPreset(key)}
-                      className={`p-2 rounded-xl border text-center transition-all ${
-                        providerType === key
-                          ? "bg-white/[0.15] border-white/30 text-white shadow-sm"
-                          : "bg-white/[0.04] border-white/[0.06] text-[#86868b] hover:bg-white/[0.08]"
-                      }`}
-                    >
-                      <div className="text-[11px] font-semibold capitalize truncate">{key}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Label */}
-              <div>
-                <label className="block text-xs font-medium text-[#86868b] mb-1.5">
-                  Provider Label / Nickname
-                </label>
-                <input
-                  type="text"
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  placeholder="e.g. Primary Groq Llama 3.3"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff] focus:ring-1 focus:ring-[#0a84ff]/30"
-                  required
-                />
-              </div>
-
-              {/* Model */}
-              <div>
-                <label className="block text-xs font-medium text-[#86868b] mb-1.5">
-                  Model Identifier
-                </label>
-                <input
-                  type="text"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="e.g. llama-3.3-70b-versatile or gemini-2.5-flash"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff] focus:ring-1 focus:ring-[#0a84ff]/30"
-                  required
-                />
-              </div>
-
-              {/* API Key */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-medium text-[#86868b]">
-                    API Key(s)
-                  </label>
-                  <span className="text-[10px] text-white/40">Comma-separate multiple keys for pool rotation</span>
-                </div>
-                <textarea
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  rows={2}
-                  placeholder="gsk_... or AIzaSy... (or key1, key2, key3)"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff] focus:ring-1 focus:ring-[#0a84ff]/30 resize-none"
-                  required
-                />
-              </div>
-
-              {/* Custom Base URL (Optional) */}
-              <div>
-                <label className="block text-xs font-medium text-[#86868b] mb-1.5">
-                  Custom Base URL <span className="text-white/40">(Optional / Self-Hosted)</span>
-                </label>
-                <input
-                  type="text"
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="e.g. https://api.groq.com/openai/v1/chat/completions"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff] focus:ring-1 focus:ring-[#0a84ff]/30"
-                />
-              </div>
-
-              {/* Routing Specialization & Weight */}
-              <div className="grid grid-cols-2 gap-4">
+            <form onSubmit={handleSave} className="flex flex-col flex-1 overflow-hidden min-h-0">
+              {/* Scrollable Form Body */}
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4 smooth-touch-scroll">
+                {/* Preset Selector */}
                 <div>
-                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
-                    Mode Specialization
+                  <label className="block text-xs font-medium text-[#86868b] mb-2 uppercase tracking-wider text-[10px]">
+                    Provider Ecosystem Preset
                   </label>
-                  <select
-                    value={preferredFor}
-                    onChange={(e) => setPreferredFor(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
-                  >
-                    <option value="" className="bg-[#1c1c1e]">General / Fallback (Any)</option>
-                    <option value="mcq" className="bg-[#1c1c1e]">MCQ Fast-Solver (⚡ Speed)</option>
-                    <option value="code" className="bg-[#1c1c1e]">Code Engine (💻 Deep Reasoning)</option>
-                  </select>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {Object.entries(presets).map(([key]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => handleSelectPreset(key)}
+                        className={`py-2 px-2.5 rounded-xl border text-center transition-all ios-press-subtle ${
+                          providerType === key
+                            ? "bg-white/[0.18] border-white/35 text-white shadow-sm shadow-black/50"
+                            : "bg-white/[0.04] border-white/[0.06] text-[#86868b] hover:text-white hover:bg-white/[0.08]"
+                        }`}
+                      >
+                        <div className="text-[11px] font-semibold capitalize truncate">{key}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
+                {/* Label & Model Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                      Provider Label / Nickname
+                    </label>
+                    <input
+                      type="text"
+                      value={label}
+                      onChange={(e) => setLabel(e.target.value)}
+                      placeholder="e.g. Primary Groq Llama 3.3"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff] focus:ring-1 focus:ring-[#0a84ff]/30"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                      Model Identifier
+                    </label>
+                    <input
+                      type="text"
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      placeholder="e.g. llama-3.3-70b-versatile or gemini-2.5-flash"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff] focus:ring-1 focus:ring-[#0a84ff]/30"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* API Key */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
                     <label className="text-xs font-medium text-[#86868b]">
-                      Load Weight
+                      API Key(s)
                     </label>
-                    <span className="text-xs font-mono font-bold text-white">{weight}%</span>
+                    <span className="text-[10px] text-white/40">Comma-separate multiple keys for pool rotation</span>
                   </div>
-                  <input
-                    type="range"
-                    min={1}
-                    max={100}
-                    value={weight}
-                    onChange={(e) => setWeight(Number(e.target.value))}
-                    className="w-full h-2 bg-white/[0.1] rounded-lg appearance-none cursor-pointer accent-[#0a84ff] mt-2.5"
+                  <textarea
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    rows={2}
+                    placeholder="gsk_... or AIzaSy... (or key1, key2, key3)"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff] focus:ring-1 focus:ring-[#0a84ff]/30 resize-none"
+                    required
                   />
                 </div>
-              </div>
 
-              {/* Priority & Active */}
-              <div className="grid grid-cols-2 gap-4">
+                {/* Custom Base URL (Optional) */}
                 <div>
                   <label className="block text-xs font-medium text-[#86868b] mb-1.5">
-                    Cascade Priority Rank
+                    Custom Base URL <span className="text-white/40">(Optional / Self-Hosted)</span>
                   </label>
                   <input
-                    type="number"
-                    min={1}
-                    max={99}
-                    value={priority}
-                    onChange={(e) => setPriority(Number(e.target.value))}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white focus:outline-none focus:border-[#0a84ff]"
+                    type="text"
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="e.g. https://api.groq.com/openai/v1/chat/completions"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white placeholder-white/30 focus:outline-none focus:border-[#0a84ff] focus:ring-1 focus:ring-[#0a84ff]/30"
                   />
-                  <span className="text-[10px] text-white/40 mt-1 block">1 is tried first</span>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
-                    Active in Brain
-                  </label>
-                  <div className="flex items-center h-[42px]">
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={isActive}
-                        onChange={(e) => setIsActive(e.target.checked)}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-white/[0.15] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0a84ff]"></div>
-                      <span className="ml-2.5 text-xs text-white">
-                        {isActive ? "Enabled" : "Disabled"}
-                      </span>
+                {/* Routing Specialization & Weight Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                      Mode Specialization
                     </label>
+                    <select
+                      value={preferredFor}
+                      onChange={(e) => setPreferredFor(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
+                    >
+                      <option value="" className="bg-[#1c1c1e]">General / Fallback (Any)</option>
+                      <option value="mcq" className="bg-[#1c1c1e]">MCQ Fast-Solver (⚡ Speed)</option>
+                      <option value="code" className="bg-[#1c1c1e]">Code Engine (💻 Deep Reasoning)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-medium text-[#86868b]">
+                        Load Weight
+                      </label>
+                      <span className="text-xs font-mono font-bold text-white">{weight}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={1}
+                      max={100}
+                      value={weight}
+                      onChange={(e) => setWeight(Number(e.target.value))}
+                      className="w-full h-2 bg-white/[0.1] rounded-lg appearance-none cursor-pointer accent-[#0a84ff] mt-2.5"
+                    />
                   </div>
                 </div>
+
+                {/* Priority & Active Switch Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 items-center">
+                  <div>
+                    <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                      Cascade Priority Rank
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={99}
+                      value={priority}
+                      onChange={(e) => setPriority(Number(e.target.value))}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white focus:outline-none focus:border-[#0a84ff]"
+                    />
+                    <span className="text-[10px] text-white/40 mt-1 block">1 is tried first</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                      Active in Brain
+                    </label>
+                    <div className="flex items-center h-[42px]">
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isActive}
+                          onChange={(e) => setIsActive(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-white/[0.15] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0a84ff]"></div>
+                        <span className="ml-2.5 text-xs text-white">
+                          {isActive ? "Enabled" : "Disabled"}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Modal Test Ping Result */}
+                {modalTestResult && (
+                  <div
+                    className={`p-3 rounded-xl border text-xs flex items-center space-x-2 ${
+                      modalTestResult.success
+                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                        : "bg-red-500/10 text-red-400 border-red-500/20"
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">
+                      {modalTestResult.success ? "check_circle" : "error"}
+                    </span>
+                    <span>
+                      {modalTestResult.success
+                        ? `Credentials verified! Latency: ${modalTestResult.latency}ms`
+                        : `Connection test failed: ${modalTestResult.error}`}
+                    </span>
+                  </div>
+                )}
+
+                {errorMsg && (
+                  <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400 flex items-center space-x-2">
+                    <span className="material-symbols-outlined text-[16px]">error</span>
+                    <span>{errorMsg}</span>
+                  </div>
+                )}
               </div>
 
-              {/* Modal Test Ping Result */}
-              {modalTestResult && (
-                <div
-                  className={`p-3 rounded-xl border text-xs flex items-center space-x-2 ${
-                    modalTestResult.success
-                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                      : "bg-red-500/10 text-red-400 border-red-500/20"
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-[16px]">
-                    {modalTestResult.success ? "check_circle" : "error"}
-                  </span>
-                  <span>
-                    {modalTestResult.success
-                      ? `Credentials verified! Latency: ${modalTestResult.latency}ms`
-                      : `Connection test failed: ${modalTestResult.error}`}
-                  </span>
-                </div>
-              )}
-
-              {errorMsg && (
-                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400 flex items-center space-x-2">
-                  <span className="material-symbols-outlined text-[16px]">error</span>
-                  <span>{errorMsg}</span>
-                </div>
-              )}
-
-              {/* Actions */}
-              <div className="flex items-center justify-between pt-4 border-t border-white/[0.08]">
+              {/* Pinned Modal Footer */}
+              <div className="shrink-0 flex items-center justify-between px-6 py-4 border-t border-white/[0.08] bg-[#161618] backdrop-blur-md">
                 <button
                   type="button"
                   onClick={handleModalPingTest}
                   disabled={modalTesting}
-                  className="apple-btn-secondary px-3.5 py-2 text-xs font-medium flex items-center space-x-1.5"
+                  className="apple-btn-secondary px-3.5 py-2 text-xs font-medium flex items-center space-x-1.5 ios-press"
                 >
                   <span className={`material-symbols-outlined text-[16px] ${modalTesting ? "animate-spin" : "text-amber-400"}`}>
                     {modalTesting ? "progress_activity" : "speed"}
@@ -991,14 +1001,14 @@ export function BrainProvidersTab({ providers, onRefresh }: BrainProvidersTabPro
                   <button
                     type="button"
                     onClick={() => setModalOpen(false)}
-                    className="apple-btn-secondary px-4 py-2 text-xs font-medium"
+                    className="apple-btn-secondary px-4 py-2 text-xs font-medium ios-press"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={saving}
-                    className="apple-btn-primary px-5 py-2 text-xs font-semibold flex items-center space-x-1.5 disabled:opacity-50"
+                    className="apple-btn-primary px-5 py-2 text-xs font-semibold flex items-center space-x-1.5 disabled:opacity-50 ios-press"
                   >
                     {saving && <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>}
                     <span>{editingProvider ? "Save Changes" : "Connect Provider"}</span>
