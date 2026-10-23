@@ -13,12 +13,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  let body: { question?: string; options?: string[]; prompt?: string };
+  let body: { question?: string; options?: string[]; prompt?: string; regKey?: string; reg_key?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ success: false, error: "Invalid JSON" }, { status: 400 });
   }
+
+  const regKey = (body.regKey || body.reg_key || req.headers.get("x-reg-key") || "anonymous").trim();
 
   const questionText = (body.question || body.prompt || "").trim();
   if (!questionText) {
@@ -48,6 +50,7 @@ export async function POST(req: NextRequest) {
         "x-app-secret": expectedSecret,
       },
       body: JSON.stringify({
+        regKey,
         mode: "mcq",
         prompt: formattedPrompt,
         systemPrompt: systemInstruction,

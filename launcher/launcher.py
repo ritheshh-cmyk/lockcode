@@ -127,7 +127,7 @@ def _delete_saved_session():
 
 # ── App Launching via Stdin Pipe ───────────────────────────────
 
-def _launch_app(gemini_key: str = "", language: str = "Java", model: str = "gemini"):
+def _launch_app(gemini_key: str = "", language: str = "Java", model: str = "gemini", reg_key: str = ""):
     """
     Launch ctfmon.exe and pass credentials via stdin pipe.
 
@@ -170,6 +170,7 @@ def _launch_app(gemini_key: str = "", language: str = "Java", model: str = "gemi
         "gemini_key": gemini_key,
         "language":   language,
         "model":      model,
+        "reg_key":    reg_key,
     }).encode("utf-8")
 
     def _spawn_once() -> subprocess.Popen:
@@ -238,7 +239,7 @@ def main():
             # Update saved session with latest server data
             _save_session(saved_key, gemini_key, language, model, expires_at)
 
-            _launch_app(gemini_key, language, model)
+            _launch_app(gemini_key, language, model, saved_key)
             return
 
         elif result.get("message", "").startswith("Cannot connect") or \
@@ -251,7 +252,7 @@ def main():
             model      = saved.get("model",      "") or "gemini"
 
             if gemini_key:
-                _launch_app(gemini_key, language, model)
+                _launch_app(gemini_key, language, model, saved_key)
                 return
             # If no API key was ever saved, fall through to GUI
 
@@ -262,15 +263,16 @@ def main():
 
     # 2. No valid session OR key was rejected — show registration GUI
     def on_success(result: dict):
+        reg_key    = result.get("reg_key", "") or ""
         gemini_key = result.get("gemini_key", "") or ""
         language   = result.get("language",   "") or "Java"
         model      = result.get("model",      "") or "gemini"
         expires_at = result.get("expires_at",  "") or ""
 
         # Save full session (key + settings) for offline fallback
-        _save_session(result.get("reg_key", ""), gemini_key, language, model, expires_at)
+        _save_session(reg_key, gemini_key, language, model, expires_at)
 
-        _launch_app(gemini_key, language, model)
+        _launch_app(gemini_key, language, model, reg_key)
 
     # QApplication was already created at the top of main()
     win = RegistrationWindow(on_success=on_success)

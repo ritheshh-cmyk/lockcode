@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logRequestHistory, estimateTokens } from "@/lib/history";
 
 export const runtime = "edge";
 export const maxDuration = 60;
 
 interface UniversalRequestBody {
+  regKey?: string;
+  reg_key?: string;
   mode?: "code" | "mcq" | "explain" | "format" | "raw" | string;
   prompt?: string;
   systemPrompt?: string;
@@ -118,6 +121,7 @@ export async function POST(req: NextRequest) {
   const mode = (body.mode || "code").toLowerCase();
   const requestedModel = (body.model || "gemini-2.5-flash").trim();
   const activeProvider = (process.env.ACTIVE_PROVIDER || "auto").trim().toLowerCase();
+  const regKey = (body.regKey || body.reg_key || req.headers.get("x-reg-key") || "anonymous").trim();
 
   // Mode-specific system prompt injection if not explicitly supplied
   if (!systemPrompt) {
@@ -159,6 +163,23 @@ export async function POST(req: NextRequest) {
   // Helper: Format Standardized Success Response
   const buildSuccessResponse = (text: string, provider: string, modelName: string) => {
     const latencyMs = Date.now() - startTime;
+    const pTokens = estimateTokens(userPrompt);
+    const cTokens = estimateTokens(text);
+
+    // Asynchronously log to history and rotate (maintaining max 10 entries per user)
+    logRequestHistory({
+      reg_key: regKey,
+      mode,
+      prompt: userPrompt,
+      response: text.trim(),
+      provider,
+      model: modelName,
+      latency_ms: latencyMs,
+      promptTokens: pTokens,
+      completionTokens: cTokens,
+      status: "success",
+    }).catch(() => {});
+
     return NextResponse.json({
       success: true,
       text: text.trim(),
@@ -166,6 +187,11 @@ export async function POST(req: NextRequest) {
       model: modelName,
       mode,
       latency_ms: latencyMs,
+      tokens: {
+        prompt: pTokens,
+        completion: cTokens,
+        total: pTokens + cTokens,
+      },
       // Gemini structure compatibility
       candidates: [
         {
@@ -266,6 +292,17 @@ export async function POST(req: NextRequest) {
 
   // ── 5. All Providers Exhausted ──
   const latencyMs = Date.now() - startTime;
+  logRequestHistory({
+    reg_key: regKey,
+    mode,
+    prompt: userPrompt,
+    response: errorLogs.map(e => `${e.provider}: ${e.message}`).join("\n"),
+    provider: "exhausted",
+    model: "none",
+    latency_ms: latencyMs,
+    status: "failed",
+  }).catch(() => {});
+
   return NextResponse.json(
     {
       success: false,

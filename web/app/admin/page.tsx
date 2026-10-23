@@ -417,6 +417,7 @@ function OverviewPage({licenses,loading,loadLicenses,onEdit,onRevoke,onTerminate
                     <td className="px-4 py-3 text-on-surface-variant text-xs opacity-60">{timeAgo(lic.created_at||null)}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex justify-end gap-0.5 opacity-30 group-hover:opacity-100 transition-opacity">
+                        <a href={`/history?key=${lic.reg_key}`} target="_blank" rel="noopener noreferrer" title="View Token Telemetry" className="p-1.5 hover:text-cyan-400 text-on-surface-variant transition-colors cursor-pointer"><span className="material-symbols-outlined text-[18px]">query_stats</span></a>
                         <button disabled={busy} onClick={()=>onEdit(lic)} title="Edit" className="p-1.5 hover:text-primary transition-colors cursor-pointer disabled:opacity-30"><span className="material-symbols-outlined text-[18px]">edit</span></button>
                         {lic.is_active&&<button disabled={busy} onClick={()=>onRevoke(lic.id)} title="Revoke" className="p-1.5 hover:text-warning transition-colors cursor-pointer disabled:opacity-30"><span className="material-symbols-outlined text-[18px]">block</span></button>}
                         <button disabled={busy} onClick={()=>onTerminate(lic.id)} title="Terminate" className="p-1.5 hover:text-error transition-colors cursor-pointer disabled:opacity-30"><span className="material-symbols-outlined text-[18px]">timer_off</span></button>
