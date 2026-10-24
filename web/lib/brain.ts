@@ -181,7 +181,8 @@ async function callOpenAICompatible(
   model: string,
   prompt: string,
   systemPrompt: string,
-  timeoutMs = 30_000
+  timeoutMs = 30_000,
+  maxTokens = 2048
 ): Promise<{ success: boolean; text?: string; status?: number; error?: string }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -202,8 +203,8 @@ async function callOpenAICompatible(
       body: JSON.stringify({
         model,
         messages,
-        temperature: 0.2,
-        max_tokens: 4096,
+        temperature: 0.1,
+        max_tokens: maxTokens,
       }),
       signal: controller.signal,
     });
@@ -231,21 +232,24 @@ async function callOpenAICompatible(
 async function callGroq(
   provider: AIProviderRecord,
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  mode = "code"
 ): Promise<{ success: boolean; text?: string; status?: number; error?: string }> {
   const endpoint = provider.base_url?.trim() || "https://api.groq.com/openai/v1/chat/completions";
-  const model = provider.model || "llama-3.3-70b-versatile";
+  const model = provider.model || "qwen/qwen3.8-27b";
   // Support comma-separated keys for sub-rotation
   const keys = provider.api_key.split(",").map((k) => k.trim()).filter(Boolean);
   const chosenKey = keys[Math.floor(Math.random() * keys.length)] || provider.api_key;
+  const maxTokens = mode === "mcq" ? 120 : 2048;
 
-  return callOpenAICompatible(endpoint, chosenKey, model, prompt, systemPrompt, 25_000);
+  return callOpenAICompatible(endpoint, chosenKey, model, prompt, systemPrompt, 20_000, maxTokens);
 }
 
 async function callGemini(
   provider: AIProviderRecord,
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  mode = "code"
 ): Promise<{ success: boolean; text?: string; status?: number; error?: string }> {
   const keys = provider.api_key.split(",").map((k) => k.trim()).filter(Boolean);
   if (keys.length === 0) {
@@ -266,8 +270,8 @@ async function callGemini(
       const payload: Record<string, unknown> = {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 4096,
+          temperature: 0.1,
+          maxOutputTokens: mode === "mcq" ? 120 : 2048,
         },
       };
 
@@ -362,7 +366,8 @@ async function callAnthropic(
 async function callGenericOpenAI(
   provider: AIProviderRecord,
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  mode = "code"
 ): Promise<{ success: boolean; text?: string; status?: number; error?: string }> {
   let endpoint = provider.base_url?.trim() || "https://api.openai.com/v1/chat/completions";
   if (provider.provider === "deepseek" && !provider.base_url) {
@@ -376,8 +381,9 @@ async function callGenericOpenAI(
   const model = provider.model || (provider.provider === "deepseek" ? "deepseek-chat" : "gpt-4o-mini");
   const keys = provider.api_key.split(",").map((k) => k.trim()).filter(Boolean);
   const chosenKey = keys[Math.floor(Math.random() * keys.length)] || provider.api_key;
+  const maxTokens = mode === "mcq" ? 120 : 2048;
 
-  return callOpenAICompatible(endpoint, chosenKey, model, prompt, systemPrompt, 30_000);
+  return callOpenAICompatible(endpoint, chosenKey, model, prompt, systemPrompt, 25_000, maxTokens);
 }
 
 /**
@@ -386,20 +392,21 @@ async function callGenericOpenAI(
 async function dispatchToProvider(
   provider: AIProviderRecord,
   prompt: string,
-  systemPrompt: string
+  systemPrompt: string,
+  mode = "code"
 ): Promise<{ success: boolean; text?: string; status?: number; error?: string }> {
   const pType = (provider.provider || "").toLowerCase();
 
   if (pType === "groq") {
-    return callGroq(provider, prompt, systemPrompt);
+    return callGroq(provider, prompt, systemPrompt, mode);
   }
   if (pType === "gemini") {
-    return callGemini(provider, prompt, systemPrompt);
+    return callGemini(provider, prompt, systemPrompt, mode);
   }
   if (pType === "anthropic") {
     return callAnthropic(provider, prompt, systemPrompt);
   }
-  return callGenericOpenAI(provider, prompt, systemPrompt);
+  return callGenericOpenAI(provider, prompt, systemPrompt, mode);
 }
 
 /**
@@ -484,9 +491,10 @@ function applyModeRouting(
   const preferredId = mode === "code" ? config.preferredCode : mode === "mcq" ? config.preferredMcq : "auto";
   if (!preferredId || preferredId === "auto") {
     if (mode === "mcq") {
-      const mcqProviders = providers.filter((p) => p.preferred_for === "mcq");
+      // Prioritize ultra-low latency Groq LPUs or explicit MCQ providers
+      const mcqProviders = providers.filter((p) => p.preferred_for === "mcq" || p.provider === "groq");
       if (mcqProviders.length > 0) {
-        const others = providers.filter((p) => p.preferred_for !== "mcq");
+        const others = providers.filter((p) => p.preferred_for !== "mcq" && p.provider !== "groq");
         return [...mcqProviders, ...others];
       }
     } else if (mode === "code") {
@@ -507,17 +515,33 @@ let rrIndex = 0;
 
 function applyLoadBalancing(
   providers: AIProviderRecord[],
-  strategy: string
+  strategy: string,
+  hasPinned = false
 ): AIProviderRecord[] {
   if (providers.length <= 1 || strategy === "waterfall") return providers;
 
+  // If a provider is pinned, it stays at index 0 and we balance only the fallback pool
+  const head = hasPinned ? [providers[0]] : [];
+  const tail = hasPinned ? providers.slice(1) : providers;
+
+  if (tail.length <= 1) return providers;
+
+  if (strategy === "lowest_latency") {
+    const sorted = [...tail].sort((a, b) => {
+      const latA = a.last_latency_ms && a.last_latency_ms > 0 ? a.last_latency_ms : 99999;
+      const latB = b.last_latency_ms && b.last_latency_ms > 0 ? b.last_latency_ms : 99999;
+      return latA - latB;
+    });
+    return [...head, ...sorted];
+  }
+
   if (strategy === "round_robin") {
-    rrIndex = (rrIndex + 1) % providers.length;
-    return [...providers.slice(rrIndex), ...providers.slice(0, rrIndex)];
+    rrIndex = (rrIndex + 1) % tail.length;
+    return [...head, ...tail.slice(rrIndex), ...tail.slice(0, rrIndex)];
   }
 
   if (strategy === "weighted") {
-    const weights = providers.map((p) => Math.max(1, p.weight ?? 50));
+    const weights = tail.map((p) => Math.max(1, p.weight ?? 50));
     const totalWeight = weights.reduce((a, b) => a + b, 0);
     let rand = Math.random() * totalWeight;
     let chosen = 0;
@@ -525,7 +549,7 @@ function applyLoadBalancing(
       rand -= weights[i];
       if (rand <= 0) { chosen = i; break; }
     }
-    return [providers[chosen], ...providers.filter((_, i) => i !== chosen)];
+    return [...head, tail[chosen], ...tail.filter((_, i) => i !== chosen)];
   }
 
   return providers;
@@ -558,7 +582,7 @@ export async function executeBrainQuery(params: {
   if (!systemPrompt) {
     if (mode === "mcq") {
       systemPrompt =
-        "You are an expert multiple-choice examination solver. Identify the single correct option. Return the option letter and concise rationale.";
+        "You are an ultra-fast exam MCQ solver. Output in this exact format:\n<1-sentence concise rationale>\nAnswer: <digit>\nWhere <digit> is 1, 2, 3, or 4. Do not output anything else.";
     } else if (mode === "explain") {
       systemPrompt =
         "You are a senior computer scientist. Provide a concise technical breakdown, time and space complexity (Big-O), and key edge cases.";
@@ -590,8 +614,10 @@ export async function executeBrainQuery(params: {
     }
   }
 
+  const preferredId = mode === "code" ? routingConfig.preferredCode : mode === "mcq" ? routingConfig.preferredMcq : "auto";
+  const isPinned = Boolean(preferredId && preferredId !== "auto" && eligibleProviders.some((p) => p.id === preferredId));
   const modeOrdered = applyModeRouting(eligibleProviders, mode, routingConfig);
-  const orderedProviders = applyLoadBalancing(modeOrdered, routingConfig.strategy);
+  const orderedProviders = applyLoadBalancing(modeOrdered, routingConfig.strategy, isPinned);
 
   const failoverHistory: Array<{ provider: string; model: string; error: string; status?: number }> = [];
   const now = new Date();
@@ -623,7 +649,7 @@ export async function executeBrainQuery(params: {
     }
 
     const providerStart = Date.now();
-    const result = await dispatchToProvider(provider, prompt, systemPrompt);
+    const result = await dispatchToProvider(provider, prompt, systemPrompt, mode);
     const providerLatency = Date.now() - providerStart;
 
     if (result.success && result.text) {

@@ -1,7 +1,7 @@
 /**
  * Lightweight prompt sanitizer.
  * Strips zero-width watermark characters from inbound prompts.
- * Strips accessibility UI chrome tokens and repeated lines from inbound prompts (90%+ token savings).
+ * Strips accessibility UI chrome tokens and repeated lines/blocks from inbound prompts (90%+ token savings).
  * Strips markdown code fences and conversational preambles from outbound code responses.
  */
 
@@ -15,10 +15,60 @@ const UI_CHROME_NOISE = new Set([
   "system title bar"
 ]);
 
+/** Deduplicate repeating chunks/blocks (e.g. repeated question + options) */
+function deduplicateBlocks(lines: string[]): string[] {
+  if (lines.length <= 1) return lines;
+  const n = lines.length;
+
+  // 1. Exact repeating block division (e.g. 5 lines repeated twice or 3 times)
+  for (let blockLen = 1; blockLen <= Math.floor(n / 2); blockLen++) {
+    if (n % blockLen === 0) {
+      const block = lines.slice(0, blockLen);
+      let repeats = true;
+      for (let i = blockLen; i < n; i += blockLen) {
+        for (let j = 0; j < blockLen; j++) {
+          if (lines[i + j] !== block[j]) {
+            repeats = false;
+            break;
+          }
+        }
+        if (!repeats) break;
+      }
+      if (repeats) {
+        return block;
+      }
+    }
+  }
+
+  // 2. Check if second half mirrors first half
+  const half = Math.floor(n / 2);
+  let firstHalfMatchesSecond = true;
+  for (let i = 0; i < half; i++) {
+    if (lines[i] !== lines[half + i]) {
+      firstHalfMatchesSecond = false;
+      break;
+    }
+  }
+  if (firstHalfMatchesSecond) {
+    return lines.slice(0, half);
+  }
+
+  // 3. Fallback: line-by-line unique preservation
+  const seen = new Set<string>();
+  const res: string[] = [];
+  for (const l of lines) {
+    if (!seen.has(l)) {
+      seen.add(l);
+      res.push(l);
+    }
+  }
+  return res;
+}
+
 /** Strip zero-width chars and UI accessibility noise from user prompt (inbound) */
 export function sanitizePrompt(prompt: string): string {
   if (!prompt) return "";
-  let text = prompt.replace(ZERO_WIDTH_CHARS, "").trim();
+  const text = prompt.replace(ZERO_WIDTH_CHARS, "").trim();
 
   // Strip UI automation chrome junk and window headers
   const lines = text.split(/\r?\n/).map((l) => l.trim());
@@ -46,17 +96,8 @@ export function sanitizePrompt(prompt: string): string {
     cleaned.push(line);
   }
 
-  // Deduplicate repeated lines (e.g. repeated question blocks)
-  const result: string[] = [];
-  const seen = new Set<string>();
-  for (const line of cleaned) {
-    if (!seen.has(line)) {
-      seen.add(line);
-      result.push(line);
-    }
-  }
-
-  return result.join("\n").trim();
+  const deduplicated = deduplicateBlocks(cleaned);
+  return deduplicated.join("\n").trim();
 }
 
 /** Strip markdown fences + conversational preambles from AI code output (outbound) */
