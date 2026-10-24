@@ -47,7 +47,7 @@ def main():
         print(f"ERROR: File not found: {exe_path}")
         sys.exit(1)
 
-    print(f"Computing SHA-256 of {exe_path} …")
+    print(f"Computing SHA-256 of {exe_path} ...")
     digest = sha256_of(exe_path)
     size   = os.path.getsize(exe_path)
 
@@ -60,9 +60,9 @@ def main():
     }
 
     json_str = json.dumps(manifest, indent=2)
-    print("\n─── version.json ───────────────────────────────────────")
+    print("\n--- version.json ---------------------------------------")
     print(json_str)
-    print("────────────────────────────────────────────────────────\n")
+    print("--------------------------------------------------------\n")
 
     out = os.path.join(os.path.dirname(exe_path), "version.json")
     with open(out, "w", encoding="utf-8") as f:
@@ -70,8 +70,8 @@ def main():
     print(f"Written to: {out}")
     print()
     print("Next steps:")
-    print(f"  1. Upload titan.exe  → {R2_EXE_URL}")
-    print(f"  2. Upload version.json → https://pub-a6aee813155645ffb8a3c6a40166b628.r2.dev/version.json")
+    print(f"  1. Upload titan.exe  -> {R2_EXE_URL}")
+    print(f"  2. Upload version.json -> https://pub-a6aee813155645ffb8a3c6a40166b628.r2.dev/version.json")
     print(f"  3. Bump LOCAL_VERSION in auto_updater.py to '{new_version}' for the next build.")
 
 
