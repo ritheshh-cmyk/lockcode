@@ -565,6 +565,7 @@ export async function executeBrainQuery(params: {
   prompt: string;
   systemPrompt?: string;
   mode?: string;
+  optionsCount?: number;
   language?: string;
   regKey?: string;
 }): Promise<BrainQueryResult> {
@@ -581,8 +582,14 @@ export async function executeBrainQuery(params: {
   // Mode-specific system instructions
   if (!systemPrompt) {
     if (mode === "mcq") {
-      systemPrompt =
-        "You are an ultra-fast exam MCQ solver. Output in this exact format:\n<1-sentence concise rationale>\nAnswer: <digit>\nWhere <digit> is 1, 2, 3, or 4. Do not output anything else.";
+      const optCount = params.optionsCount === 5 ? 5 : 4;
+      if (optCount === 5) {
+        systemPrompt =
+          "You are an ultra-fast exam MCQ solver for a 5-option question (Options 1 to 5, or A to E). Output in this exact format:\n<1-sentence concise rationale>\nAnswer: <digit>\nWhere <digit> is 1, 2, 3, 4, or 5. Do not output anything else.";
+      } else {
+        systemPrompt =
+          "You are an ultra-fast exam MCQ solver for a 4-option question (Options 1 to 4, or A to D). Output in this exact format:\n<1-sentence concise rationale>\nAnswer: <digit>\nWhere <digit> is 1, 2, 3, or 4. Do not output anything else.";
+      }
     } else if (mode === "explain") {
       systemPrompt =
         "You are a senior computer scientist. Provide a concise technical breakdown, time and space complexity (Big-O), and key edge cases.";
