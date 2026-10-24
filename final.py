@@ -134,8 +134,26 @@ def get_coding_prompt(language: str = "Java") -> str:
     return _DEFAULT_CODING_PROMPT.replace("{language}", language or "Java")
 
 
-def get_mcq_prompt() -> str:
-    """Return hardcoded MCQ system prompt."""
+def get_mcq_prompt(options_count: int = 4) -> str:
+    """Return hardcoded MCQ system prompt, parameterized by option count."""
+    if options_count == 5:
+        return (
+            "You are an expert MCQ solver with deep knowledge in computer science, "
+            "mathematics, reasoning, aptitude, and general knowledge.\n\n"
+            "INSTRUCTIONS (follow EXACTLY):\n"
+            "1. Read the question and ALL five options (1 to 5, or A to E) carefully.\n"
+            "2. Think step-by-step: identify the concept, apply the relevant formula/logic, "
+            "   evaluate each option, and eliminate wrong ones.\n"
+            "3. Your reasoning MUST be brief (1-2 sentences max).\n"
+            "4. On the VERY LAST line of your response, write EXACTLY:\n"
+            "   Answer: <number>\n"
+            "   where <number> is 1, 2, 3, 4, or 5 corresponding to the correct option.\n"
+            "5. Do NOT write anything after the Answer line. No explanation, no period, nothing.\n\n"
+            "EXAMPLE OUTPUT:\n"
+            "Binary search requires a sorted array and runs in O(log n). "
+            "Option 5 states O(log n) which is correct.\n"
+            "Answer: 5\n"
+        )
     return _DEFAULT_MCQ_PROMPT
 
 def set_window_exclude_from_capture(hwnd):
@@ -170,7 +188,7 @@ BRIDGE_URL = _D("ZXRhcmVuZWcvZWdkaXJiL2lwYS9wcGEubGVjcmV2Ljc5LWVwdWF0LWlocC1iZXc
 APP_SECRET = os.environ.get(_D("VEVSQ0VTX1BQQQ=="), _D("NjIwMi10ZXJjZXMtcHBha2NvbA=="))
 
 
-def _call_vercel_bridge(prompt_text: str, system_prompt: str = "", mode: str = "code") -> str | None:
+def _call_vercel_bridge(prompt_text: str, system_prompt: str = "", mode: str = "code", options_count: int = 4) -> str | None:
     """Send question or code prompt to Vercel Edge AI Hub.
     Bypasses campus Wi-Fi blocking (HTTP 403), eliminates client key exposure,
     and benefits from server-side Gemini rotation + Groq failover.
@@ -184,6 +202,7 @@ def _call_vercel_bridge(prompt_text: str, system_prompt: str = "", mode: str = "
             "mode": mode,
             "prompt": prompt_text,
             "systemPrompt": system_prompt,
+            "optionsCount": options_count,
             "language": _RUNTIME_LANGUAGE,
             "regKey": _RUNTIME_REG_KEY,
         }
@@ -652,11 +671,12 @@ class McqChatbotThread(threading.Thread):
     _route_cooldowns = {}  # (api_version, model_name) -> monotonic timestamp
     _api_key_cooldowns = {}  # api_key -> monotonic timestamp
     
-    def __init__(self, prompt, api_keys, window=None):
+    def __init__(self, prompt, api_keys, window=None, options_count=4):
         super().__init__(daemon=True)
         self.prompt = prompt
         self.api_keys = list(api_keys or [])
         self.window = window
+        self.options_count = options_count
         self.error_occurred = McqSignalMock(self._emit_error)
         self.response_ready = McqSignalMock(self._emit_response)
         self.option_ready = McqSignalMock(self._emit_option)
@@ -700,10 +720,10 @@ class McqChatbotThread(threading.Thread):
                 pass
         return BASE_BACKOFF_SECONDS * (2 ** attempt_index)
 
-    def _normalize_answer(self, raw_text):
+    def _normalize_answer(self, raw_text, num_options=5):
         """
-        Normalize model output into one of: '1', '2', '3', '4'.
-        Most robust strategy: Check explicit answer declarations FIRST.
+        Normalize model output into one of: '1', '2', '3', '4', '5'.
+        Supports both 4-option (F4) and 5-option (F8) MCQ modes.
         """
         if not raw_text:
             return None
@@ -715,132 +735,76 @@ class McqChatbotThread(threading.Thread):
         original_text = text
         text_lower = text.lower()
 
-        # Letter-to-digit mapping
-        letter_map = {
-            "a": "1",
-            "b": "2",
-            "c": "3",
-            "d": "4",
-        }
-        
-        word_map = {
-            "one": "1",
-            "two": "2",
-            "three": "3",
-            "four": "4",
-            "first": "1",
-            "second": "2",
-            "third": "3",
-            "fourth": "4",
-        }
+        if num_options == 5:
+            allowed_digits = ('1', '2', '3', '4', '5')
+            letter_map = {'a': '1', 'b': '2', 'c': '3', 'd': '4', 'e': '5'}
+            word_map = {
+                'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
+                'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5'
+            }
+        else:
+            allowed_digits = ('1', '2', '3', '4')
+            letter_map = {'a': '1', 'b': '2', 'c': '3', 'd': '4'}
+            word_map = {
+                'one': '1', 'two': '2', 'three': '3', 'four': '4',
+                'first': '1', 'second': '2', 'third': '3', 'fourth': '4'
+            }
 
-        # ============================================================
-        # PRIORITY 1: Explicit answer declarations (HIGHEST PRIORITY)
-        # Focus on LAST 200 chars which should contain the final answer
-        # ============================================================
+        # PRIORITY 1: Explicit answer declarations
         last_portion = text_lower[-200:] if len(text_lower) > 200 else text_lower
-        
-        # Check for explicit answer statements in last portion
         answer_patterns = [
-            "answer: ",
-            "answer is ",
-            "the answer is ",
-            "correct answer: ",
-            "correct answer is ",
-            "the correct option is ",
-            "correct option: ",
+            "answer: ", "answer is ", "the answer is ",
+            "correct answer: ", "correct answer is ",
+            "the correct option is ", "correct option: ",
         ]
-        
+
         for pattern in answer_patterns:
             if pattern in last_portion:
-                # Get the LAST occurrence in the last portion
                 idx = last_portion.rfind(pattern)
                 after_pattern = last_portion[idx + len(pattern):].strip()
-                
-                # Extract first digit or letter found
                 for char in after_pattern:
-                    if char in ("1", "2", "3", "4"):
+                    if char in allowed_digits:
                         return char
                     if char.lower() in letter_map:
                         return letter_map[char.lower()]
-                    # Stop at punctuation/boundary
                     if char in ".!?\n":
                         break
 
-        # ============================================================
         # PRIORITY 2: Patterns with explicit option/choice references
-        # ============================================================
-        for digit in ("1", "2", "3", "4"):
-            # "option 1", "option a", "choice 2", "choice d"
+        for digit in allowed_digits:
+            letter = chr(ord('a') + int(digit) - 1)
             patterns = [
-                f"option {digit}",
-                f"choice {digit}",
-                f"option {letter_map.get(chr(ord('a') + int(digit) - 1))}",  # option a, b, c, d
+                f"option {digit}", f"choice {digit}",
+                f"option {letter}", f"choice {letter}",
             ]
             for pattern in patterns:
                 if pattern in text_lower:
                     return digit
 
-        # ============================================================
         # PRIORITY 3: Fast path for exact single token
-        # ============================================================
-        if text in ("1", "2", "3", "4"):
+        if text in allowed_digits:
             return text
-        
-        # Check exact word mapping matches
+
         if text_lower in word_map:
             return word_map[text_lower]
 
-        # ============================================================
-        # PRIORITY 4: Last sentence analysis (likely contains answer)
-        # ============================================================
-        # Split by sentence breaks and analyze the last non-empty sentence
-        sentences = [s.strip() for s in text_lower.replace(".", "\n").replace("!", "\n").replace("?", "\n").split("\n")]
-        sentences = [s for s in sentences if s]  # Remove empty
-        
-        if sentences:
-            last_sentence = sentences[-1]
-            
-            # Check for digits in last sentence
-            for char in last_sentence:
-                if char in ("1", "2", "3", "4"):
-                    return char
-            
-            # Check for letters in last sentence
-            for char in last_sentence:
-                if char.lower() in letter_map:
-                    return letter_map[char.lower()]
-
-        # ============================================================
-        # PRIORITY 5: Word-based token search across entire text
-        # ============================================================
+        # PRIORITY 4: Word-based token search
         tokens = text_lower.split()
-        
         for token in tokens:
-            # Clean token
             clean_token = token.strip(".,!?;:()[]{}").lower()
-            
-            # Check if it's a digit
-            if clean_token in ("1", "2", "3", "4"):
+            if clean_token in allowed_digits:
                 return clean_token
-            
-            # Check if it's a mapped word
             if clean_token in word_map:
                 return word_map[clean_token]
-            
-            # Check if it's a single letter
             if len(clean_token) == 1 and clean_token in letter_map:
                 return letter_map[clean_token]
 
-        # ============================================================
-        # PRIORITY 6: Scan original text for any digit (last resort)
-        # ============================================================
+        # PRIORITY 5: Scan original text for any allowed digit
         for char in original_text:
-            if char in ("1", "2", "3", "4"):
+            if char in allowed_digits:
                 return char
 
         return None
-
 
     def _build_prompt(self, strict=False):
         base_prompt = (
@@ -1061,10 +1025,11 @@ class McqChatbotThread(threading.Thread):
             prompt_text = self._build_prompt(strict=False)
 
             # ── 1. Primary: Centralized Vercel Edge AI Hub ──
-            bridge_answer = _call_vercel_bridge(prompt_text, get_mcq_prompt(), mode="mcq")
+            sys_prompt = get_mcq_prompt(self.options_count)
+            bridge_answer = _call_vercel_bridge(prompt_text, sys_prompt, mode="mcq", options_count=self.options_count)
             if bridge_answer:
                 answer_line = self._extract_mcq_answer_line(bridge_answer)
-                digit = self._normalize_answer(answer_line) or self._normalize_answer(bridge_answer)
+                digit = self._normalize_answer(answer_line, num_options=self.options_count) or self._normalize_answer(bridge_answer, num_options=self.options_count)
                 self.response_ready.emit(bridge_answer, digit or "?")
                 if digit:
                     self.option_ready.emit(digit)
@@ -1409,6 +1374,7 @@ class UnifiedChatbotUI:
 
         self.trigger_code_signal = Win32SignalMock(self, 'capture_for_code')
         self.trigger_mcq_signal = Win32SignalMock(self, 'capture_for_mcq')
+        self.trigger_mcq5_signal = Win32SignalMock(self, 'capture_for_mcq5')
         self.trigger_line_signal = Win32SignalMock(self, 'type_next_line')
         self.trigger_paste_signal = Win32SignalMock(self, 'paste_all_code')
         self.trigger_hide_signal = Win32SignalMock(self, 'toggle_visibility')
@@ -1710,12 +1676,13 @@ class UnifiedChatbotUI:
         VK_F4 = 0x73
         VK_F5 = 0x74
         VK_F6 = 0x75
+        VK_F8 = 0x77
         VK_F9 = 0x78
         VK_MENU = 0x12
         VK_T = 0x54
 
         state = {VK_F2: False, VK_F3: False, VK_F4: False, VK_F5: False,
-                 VK_F6: False, VK_F9: False, VK_T: False}
+                 VK_F6: False, VK_F8: False, VK_F9: False, VK_T: False}
 
         def is_pressed(vk):
             return (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000) != 0
@@ -1734,7 +1701,10 @@ class UnifiedChatbotUI:
                             self.flash_key_hint_signal.emit("F3 Stealth")
                         elif vk == VK_F4:
                             self.trigger_mcq_signal.emit()
-                            self.flash_key_hint_signal.emit("F4 MCQ")
+                            self.flash_key_hint_signal.emit("F4 MCQ (4-Opt)")
+                        elif vk == VK_F8:
+                            self.trigger_mcq5_signal.emit()
+                            self.flash_key_hint_signal.emit("F8 MCQ (5-Opt)")
                         elif vk == VK_F5:
                             self.trigger_code_signal.emit()
                             self.flash_key_hint_signal.emit("F5 Code")
@@ -1828,17 +1798,22 @@ class UnifiedChatbotUI:
         self.extract_thread = CodeExtractThread(target_hwnd, self)
         self.extract_thread.start()
 
-    def capture_for_mcq(self):
+    def capture_for_mcq(self, options_count=4):
         if getattr(self, '_processing', False):
             return
         self._processing = True
         self.mode = 'mcq'
+        self.mcq_options_count = options_count
 
         target_hwnd = self._last_target_hwnd
         self._ensure_topmost_if_visible()
-        self.output.setText("1/3 🔍 Capturing screen for MCQ AI...")
+        opt_label = "5-Option" if options_count == 5 else "4-Option"
+        self.output.setText(f"1/3 🔍 Capturing screen for {opt_label} MCQ AI...")
         self.extract_thread = McqExtractThread(target_hwnd, self)
         self.extract_thread.start()
+
+    def capture_for_mcq5(self):
+        self.capture_for_mcq(options_count=5)
 
     def _on_window_text(self, text):
         self.text_input.setPlainText(text)
@@ -1861,7 +1836,8 @@ class UnifiedChatbotUI:
         if self.mode == 'code':
             self.worker = CodeChatbotThread(text_to_send, self.api_keys, self)
         else:
-            self.worker = McqChatbotThread(text_to_send, self.api_keys, self)
+            opt_cnt = getattr(self, 'mcq_options_count', 4)
+            self.worker = McqChatbotThread(text_to_send, self.api_keys, self, options_count=opt_cnt)
 
         self.worker.start()
 
@@ -1899,12 +1875,13 @@ class UnifiedChatbotUI:
     def _get_option_positions(self):
         screen_width, screen_height = pyautogui.size()
         positions = {
-            '1': (EDGE_PADDING, EDGE_PADDING),
-            '2': (screen_width - EDGE_PADDING, EDGE_PADDING),
-            '3': (EDGE_PADDING, screen_height - EDGE_PADDING),
-            '4': (screen_width - EDGE_PADDING, screen_height - EDGE_PADDING)
+            '1': (EDGE_PADDING, EDGE_PADDING),                                  # Top-Left (Option 1 / A)
+            '2': (screen_width - EDGE_PADDING, EDGE_PADDING),                   # Top-Right (Option 2 / B)
+            '3': (EDGE_PADDING, screen_height - EDGE_PADDING),                  # Bottom-Left (Option 3 / C)
+            '4': (screen_width - EDGE_PADDING, screen_height - EDGE_PADDING),   # Bottom-Right (Option 4 / D)
+            '5': (screen_width // 2, screen_height // 2)                        # Center of Screen (Option 5 / E)
         }
-        for option in ('1', '2', '3', '4'):
+        for option in ('1', '2', '3', '4', '5'):
             x_val = os.getenv(f"OPT_{option}_X")
             y_val = os.getenv(f"OPT_{option}_Y")
             if x_val is not None and y_val is not None:
@@ -1917,7 +1894,7 @@ class UnifiedChatbotUI:
         return positions
 
     def _move_cursor(self, position):
-        if position not in ('1', '2', '3', '4'):
+        if position not in ('1', '2', '3', '4', '5'):
             return
         positions = self._get_option_positions()
         try:

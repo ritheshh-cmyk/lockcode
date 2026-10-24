@@ -9,6 +9,8 @@ interface UniversalRequestBody {
   regKey?: string;
   reg_key?: string;
   mode?: "code" | "mcq" | "explain" | "format" | "raw" | string;
+  optionsCount?: number;
+  options_count?: number;
   prompt?: string;
   systemPrompt?: string;
   language?: string;
@@ -151,11 +153,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const optionsCount = body.optionsCount || body.options_count || (userPrompt.toLowerCase().includes("option 5") || userPrompt.toLowerCase().includes("e)") ? 5 : 4);
+
   // 4. Execute Query Through Centralized AI Brain
   const brainResult = await executeBrainQuery({
     prompt: userPrompt,
     systemPrompt,
     mode,
+    optionsCount,
     language,
     regKey,
   });

@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
   const systemInstruction =
     "You are an expert examination solver. You must determine the single correct option for the multiple-choice question. " +
     "Return your response in STRICT valid JSON format with keys: " +
-    '"option" (string, e.g. "A", "B", "C", or "D"), ' +
+    '"option" (string, e.g. "A", "B", "C", "D", or "E"), ' +
     '"confidence" (number between 0 and 100), ' +
     '"explanation" (string, 1-2 concise sentences explaining why this option is correct). ' +
     "Do not wrap in markdown fences or add commentary outside the JSON.";
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
     parsed = JSON.parse(cleanedJson);
   } catch {
     // Robust regex fallback to extract option letter
-    const match = rawText.match(/\b([A-D])\b/i);
+    const match = rawText.match(/\b([A-E1-5])\b/i);
     parsed = {
       option: match ? match[1].toUpperCase() : "A",
       confidence: 85,
