@@ -57,3 +57,19 @@
 15. **Per-User Rolling Request Buffer (Circular Storage)**:
     - To provide full prompt/response inspection and token consumption metrics without unbound database bloat, enforce an immediate post-insert rotation query (`delete where id in (select id from request_history where reg_key = ? order by created_at desc offset 10)`).
     - Use direct REST `fetch` calls to Supabase REST endpoints (`/rest/v1/request_history`) within Next.js Edge Runtime handlers to avoid cold start latency and heavy client bundle overhead.
+
+
+## Centralized AI Brain & Next.js Production Architecture
+16. **Dynamic Provider Cascades & Streaming Interoperability**:
+    - In Next.js 16, multi-provider streaming endpoints (`/api/bridge/stream`) cascading across varied upstream APIs (Groq, OpenAI, Gemini SSE, DeepSeek, Anthropic, Custom) must use standard Web Streams API (`ReadableStream` / `TransformStream`) returning `Content-Type: text/event-stream`.
+    - Universal bridge endpoints (`/api/bridge/generate`, `/api/bridge/stream`) must normalize both `body.prompt` and `body.question` to maintain zero-friction interoperability with legacy and updated desktop client binaries.
+    - Browser-based playground simulators must never hardcode test license keys in state; always default to `'anonymous'` with a dynamic dropdown selector populated from valid database licenses to prevent accidental 403 killswitch rejections.
+
+## Stability, Cython Engine & Model Configuration (v1.0.2)
+17. **Cython Directives & Pointer Arithmetic (`0xc0000005`)**:
+    - Disabling `wraparound: False` and `boundscheck: False` in Cython on arbitrary Python string manipulation causes negative indices (e.g. `text[-200:]`) to compile into raw pointer offsets *before* the buffer start. In Python 3.14 on Windows, this produces an immediate `0xc0000005` (STATUS_ACCESS_VIOLATION) crash in `PyUnicode_FromKindAndData`. Keep `wraparound: True` and `boundscheck: True` in `setup_cython.py`, and defensively clamp start indices using `max(0, len(text) - offset)`.
+18. **Gemini 2.5 Flash Thinking Budget Starvation**:
+    - Reasoning models such as `gemini-2.5-flash` consume output tokens on their internal thought chain (`thoughtsTokenCount`). When `maxOutputTokens` is capped at a low limit (e.g. 120), a thought chain of 112 tokens leaves only 8 tokens for the actual response, prematurely truncating before completing `Answer: <number>`. For latency-critical MCQ parsing, explicitly set `thinkingConfig: { thinkingBudget: 0 }` and provide a minimum buffer of 400 `maxOutputTokens`.
+19. **Automated Cursor Failsafe**:
+    - `pyautogui` defaults `FAILSAFE = True`, triggering `FailSafeException` if an option's bounding box coordinates target near screen corners (e.g. `(0, 0)`). Explicitly set `pyautogui.FAILSAFE = False` inside cursor displacement routines to prevent sudden unhandled termination.
+
