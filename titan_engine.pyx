@@ -808,12 +808,14 @@ class McqChatbotThread(threading.Thread):
         return None
 
     def _build_prompt(self, strict=False):
+        opt_cnt = getattr(self, 'options_count', 4)
+        max_num = "1, 2, 3, 4, or 5" if opt_cnt == 5 else "1, 2, 3, or 4"
         base_prompt = (
             "Analyze this multiple choice question step by step.\n"
             "Consider each option carefully before deciding.\n"
             "End your response with the answer on its own line in this exact format:\n"
             "Answer: <number>\n"
-            "where <number> is 1, 2, 3, or 4.\n"
+            f"where <number> is {max_num}.\n"
         )
 
         if strict:
@@ -882,11 +884,11 @@ class McqChatbotThread(threading.Thread):
         # Search from the bottom of the response for the last Answer: N line
         match = None
         for line in reversed(text.splitlines()):
-            m = _re.search(r'answer\s*:\s*([1-5])', line.strip(), _re.IGNORECASE)
+            m = _re.search(r'(?:\*{1,2})?answer(?:\*{1,2})?\s*:\s*(?:\*{1,2})?\(?\s*([1-5]|[a-e])\b', line.strip(), _re.IGNORECASE)
             if m:
-                match = m.group(0).strip().capitalize()  # "Answer: 2"
-                # Normalise capitalisation to "Answer: N"
-                match = _re.sub(r'(?i)answer\s*:', 'Answer:', match)
+                raw_ans = m.group(1).lower()
+                mapped_ans = {'a': '1', 'b': '2', 'c': '3', 'd': '4', 'e': '5'}.get(raw_ans, raw_ans)
+                match = f"Answer: {mapped_ans}"
                 break
         return match if match else text
 
@@ -1199,7 +1201,7 @@ class McqChatbotThread(threading.Thread):
                 full_answer_text = self._extract_answer_text(response_data)
                 # Post-process: strip explanation, keep only the "Answer: N" line for extraction
                 answer_line = self._extract_mcq_answer_line(full_answer_text)
-                digit = self._normalize_answer(answer_line)
+                digit = self._normalize_answer(answer_line, num_options=getattr(self, 'options_count', 4)) or self._normalize_answer(full_answer_text, num_options=getattr(self, 'options_count', 4))
                 if digit:
                     self.option_ready.emit(digit)
                     self.response_ready.emit(full_answer_text, digit)
@@ -1215,7 +1217,7 @@ class McqChatbotThread(threading.Thread):
                             full_strict_text = self._extract_answer_text(strict_data)
                             # Post-process strict retry too
                             strict_answer_line = self._extract_mcq_answer_line(full_strict_text)
-                            strict_digit = self._normalize_answer(strict_answer_line)
+                            strict_digit = self._normalize_answer(strict_answer_line, num_options=getattr(self, 'options_count', 4)) or self._normalize_answer(full_strict_text, num_options=getattr(self, 'options_count', 4))
                             if strict_digit:
                                 self.option_ready.emit(strict_digit)
                                 self.response_ready.emit(full_strict_text, strict_digit)
@@ -1874,7 +1876,11 @@ class UnifiedChatbotUI:
         self.text_input.setDisabled(False)
 
     def _get_option_positions(self):
-        screen_width, screen_height = pyautogui.size()
+        try:
+            screen_width, screen_height = pyautogui.size()
+        except Exception:
+            screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+            screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
         positions = {
             '1': (EDGE_PADDING, EDGE_PADDING),                                  # Top-Left (Option 1 / A)
             '2': (screen_width - EDGE_PADDING, EDGE_PADDING),                   # Top-Right (Option 2 / B)
