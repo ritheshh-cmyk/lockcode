@@ -23,6 +23,7 @@ ext = Extension(
     sources=["titan_engine.pyx"],   # copy of final.py
     include_dirs=[],
     extra_compile_args=["-O2"],
+    extra_link_args=["/MAP:titan_engine.map"],
 )
 
 setup(
@@ -31,8 +32,8 @@ setup(
         ext,
         compiler_directives={
             "language_level": "3",
-            "boundscheck": False,
-            "wraparound": False,
+            "boundscheck": True,
+            "wraparound": True,
         },
         quiet=False,
     ),

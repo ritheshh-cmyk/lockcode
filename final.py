@@ -491,12 +491,12 @@ class CodeChatbotThread(threading.Thread):
                                         retry_success = True
                                         break
                                 if not retry_success and status_code == 429:
-                                    last_error = f"Rate limit (429) for key ...{api_key[-4:]}, rotating."
+                                    last_error = f"Rate limit (429) for key ...{api_key[max(0, len(api_key)-4):]}, rotating."
                                     key_failed = True
                                     break
 
                             if status_code in (401, 403):
-                                last_error = f"Auth error ({status_code}) for key ...{api_key[-4:]}, rotating."
+                                last_error = f"Auth error ({status_code}) for key ...{api_key[max(0, len(api_key)-4):]}, rotating."
                                 key_failed = True
                                 break
 
@@ -751,7 +751,8 @@ class McqChatbotThread(threading.Thread):
             }
 
         # PRIORITY 1: Explicit answer declarations
-        last_portion = text_lower[-200:] if len(text_lower) > 200 else text_lower
+        start_idx = max(0, len(text_lower) - 200)
+        last_portion = text_lower[start_idx:]
         answer_patterns = [
             "answer: ", "answer is ", "the answer is ",
             "correct answer: ", "correct answer is ",
@@ -881,7 +882,7 @@ class McqChatbotThread(threading.Thread):
         # Search from the bottom of the response for the last Answer: N line
         match = None
         for line in reversed(text.splitlines()):
-            m = _re.search(r'answer\s*:\s*([1-4])', line.strip(), _re.IGNORECASE)
+            m = _re.search(r'answer\s*:\s*([1-5])', line.strip(), _re.IGNORECASE)
             if m:
                 match = m.group(0).strip().capitalize()  # "Answer: 2"
                 # Normalise capitalisation to "Answer: N"
@@ -1898,6 +1899,7 @@ class UnifiedChatbotUI:
             return
         positions = self._get_option_positions()
         try:
+            pyautogui.FAILSAFE = False
             x, y = positions[position]
             pyautogui.moveTo(x, y, duration=CURSOR_MOVE_DURATION_SECONDS)
         except Exception:
