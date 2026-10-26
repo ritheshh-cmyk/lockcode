@@ -42,18 +42,27 @@ function extractSystemPromptFromInstruction(instruction?: { parts?: Array<{ text
  * Validate license per query (payload-bound killswitch).
  * Returns null if valid, error string if invalid.
  */
+const licenseValidationCache = new Map<string, { err: string | null; expiry: number }>();
+
 async function validateLicenseKey(regKey: string): Promise<string | null> {
   if (!regKey || regKey === "anonymous") return null; // no validation for anonymous
+  const now = Date.now();
+  const cached = licenseValidationCache.get(regKey);
+  if (cached && cached.expiry > now) {
+    return cached.err;
+  }
   try {
     const { data, error } = await supabaseAdmin
       .from("licenses")
       .select("is_active, expires_at")
       .eq("reg_key", regKey)
       .single();
-    if (error || !data) return "License not found";
-    if (!data.is_active) return "License revoked";
-    if (data.expires_at && new Date(data.expires_at) < new Date()) return "License expired";
-    return null; // valid
+    let err: string | null = null;
+    if (error || !data) err = "License not found";
+    else if (!data.is_active) err = "License revoked";
+    else if (data.expires_at && new Date(data.expires_at) < new Date()) err = "License expired";
+    licenseValidationCache.set(regKey, { err, expiry: now + 60_000 });
+    return err;
   } catch {
     return null; // fail open (don't block on DB error)
   }

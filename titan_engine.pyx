@@ -559,6 +559,7 @@ POSITIONS_FILE_NAME = "option_positions.json"
 
 # Create a persistent HTTP session for connection reuse (reduces latency)
 HTTP_SESSION = requests.Session()
+HTTP_SESSION.trust_env = False
 HTTP_SESSION.headers.update({"Content-Type": "application/json"})
 
 # #6: ssl_verify — read from INI, defaults False (corporate proxy bypass)
@@ -1905,9 +1906,13 @@ class UnifiedChatbotUI:
             return
         positions = self._get_option_positions()
         try:
-            pyautogui.FAILSAFE = False
             x, y = positions[position]
-            pyautogui.moveTo(x, y, duration=CURSOR_MOVE_DURATION_SECONDS)
+            try:
+                # Instant native Win32 cursor positioning (0ms, bypasses pyautogui overhead)
+                win32api.SetCursorPos((int(x), int(y)))
+            except Exception:
+                pyautogui.FAILSAFE = False
+                pyautogui.moveTo(x, y, duration=CURSOR_MOVE_DURATION_SECONDS)
         except Exception:
             pass
 
