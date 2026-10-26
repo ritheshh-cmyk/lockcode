@@ -34,7 +34,7 @@ import requests
 # ─────────────────────────────────────────────────────────────
 # CONFIGURATION  (edit before release)
 # ─────────────────────────────────────────────────────────────
-LOCAL_VERSION   = "1.0.2"          # <-- bump this on every build
+LOCAL_VERSION   = "1.0.3"          # <-- bump this on every build
 R2_VERSION_URL  = (
     "https://pub-a6aee813155645ffb8a3c6a40166b628.r2.dev/version.json"
 )
