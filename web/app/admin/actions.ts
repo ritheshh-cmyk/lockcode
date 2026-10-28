@@ -387,9 +387,10 @@ export async function updatePoolKeyStatus(
 
 export async function updatePoolKeyLabel(id: string, label: string): Promise<void> {
   requireId(id, "updatePoolKeyLabel");
+  const cleanLabel = typeof label === "string" ? label.trim() || null : null;
   const { error } = await supabaseAdmin
     .from("api_key_pool")
-    .update({ label: label.trim() || null })
+    .update({ label: cleanLabel })
     .eq("id", id);
   if (error) throw new Error(error.message);
 }
@@ -685,15 +686,21 @@ export async function saveBrainProvider(provider: {
   is_active?: boolean;
 }): Promise<{ success: boolean; error?: string; provider?: BrainProviderItem }> {
   try {
+    const cleanProvider = (provider.provider || "groq").toLowerCase().trim();
+    const cleanLabel = (provider.label || `${cleanProvider} Provider`).trim();
+    const cleanApiKey = (provider.api_key || "").trim();
+    const cleanModel = (provider.model || "").trim();
+    const cleanBaseUrl = provider.base_url ? provider.base_url.trim() || null : null;
+
     if (provider.id) {
       const { data, error } = await supabaseAdmin
         .from("ai_providers")
         .update({
-          provider: provider.provider.toLowerCase().trim(),
-          label: provider.label.trim(),
-          api_key: provider.api_key.trim(),
-          model: provider.model.trim(),
-          base_url: provider.base_url?.trim() || null,
+          provider: cleanProvider,
+          label: cleanLabel,
+          api_key: cleanApiKey,
+          model: cleanModel,
+          base_url: cleanBaseUrl,
           priority: provider.priority ?? 1,
           weight: Math.max(1, Math.min(100, provider.weight ?? 50)),
           preferred_for: provider.preferred_for || null,
@@ -709,11 +716,11 @@ export async function saveBrainProvider(provider: {
       const { data, error } = await supabaseAdmin
         .from("ai_providers")
         .insert({
-          provider: provider.provider.toLowerCase().trim(),
-          label: (provider.label || `${provider.provider} Provider`).trim(),
-          api_key: provider.api_key.trim(),
-          model: provider.model.trim(),
-          base_url: provider.base_url?.trim() || null,
+          provider: cleanProvider,
+          label: cleanLabel,
+          api_key: cleanApiKey,
+          model: cleanModel,
+          base_url: cleanBaseUrl,
           priority: provider.priority ?? 1,
           weight: Math.max(1, Math.min(100, provider.weight ?? 50)),
           preferred_for: provider.preferred_for || null,
@@ -854,13 +861,13 @@ export async function saveRoutingStrategy(config: RoutingConfig): Promise<{ succ
 
 // ── HWID / Machine Lock Management ──────────────────────────────────────────
 
-export async function resetMachineLock(licenseId: string): Promise<{ success: boolean; error?: string }> {
-  requireId(licenseId, "resetMachineLock");
+export async function resetMachineLock(licenseIdOrKey: string): Promise<{ success: boolean; error?: string }> {
   try {
+    const { column, value } = getLicenseFilter(licenseIdOrKey, "resetMachineLock");
     const { error } = await supabaseAdmin
       .from("licenses")
       .update({ machine_id: null, activated_at: null })
-      .eq("id", licenseId);
+      .eq(column, value);
     if (error) return { success: false, error: error.message };
     return { success: true };
   } catch (e: any) {
