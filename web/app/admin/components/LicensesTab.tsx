@@ -113,50 +113,71 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
     setSaving(true);
     setErrorMsg("");
 
-    const res = await createLicense({
-      custom_key: customKey.trim() || undefined,
-      days: Number(durationDays) || 1,
-      label: label.trim() || undefined,
-      language: language.trim() || "Java",
-      model: allottedModel.trim() || "all",
-    });
+    try {
+      const res = await createLicense({
+        custom_key: customKey.trim() || undefined,
+        days: Number(durationDays) || 1,
+        label: label.trim() || undefined,
+        language: language.trim() || "Java",
+        model: allottedModel.trim() || "all",
+      });
 
-    setSaving(false);
-    if (res.success) {
-      setModalOpen(false);
-      onRefresh();
-    } else {
-      setErrorMsg(res.error || "Failed to create license.");
+      setSaving(false);
+      if (res.success) {
+        setModalOpen(false);
+        onRefresh();
+      } else {
+        setErrorMsg(res.error || "Failed to create license.");
+      }
+    } catch (err: any) {
+      setSaving(false);
+      setErrorMsg(err?.message || "Failed to create license.");
     }
   };
 
-  const handleRevoke = async (regKey: string) => {
-    if (confirm(`Revoke license key ${regKey}?`)) {
-      await revokeLicense(regKey);
-      onRefresh();
+  const handleRevoke = async (keyOrId: string) => {
+    if (confirm(`Revoke license key ${keyOrId}?`)) {
+      try {
+        await revokeLicense(keyOrId);
+        onRefresh();
+      } catch (err: any) {
+        alert(err?.message || "Failed to revoke license");
+      }
     }
   };
 
-  const handleResetMachine = async (regKey: string) => {
-    if (confirm(`Reset hardware lock for ${regKey}? Client can activate on a new machine.`)) {
-      await resetLicense(regKey);
-      onRefresh();
+  const handleResetMachine = async (keyOrId: string) => {
+    if (confirm(`Reset hardware lock for ${keyOrId}? Client can activate on a new machine.`)) {
+      try {
+        await resetLicense(keyOrId);
+        onRefresh();
+      } catch (err: any) {
+        alert(err?.message || "Failed to reset hardware lock");
+      }
     }
   };
 
-  const handleDelete = async (regKey: string) => {
-    if (confirm(`Permanently delete license ${regKey}? This action cannot be undone.`)) {
-      await deleteLicense(regKey);
-      onRefresh();
+  const handleDelete = async (keyOrId: string) => {
+    if (confirm(`Permanently delete license ${keyOrId}? This action cannot be undone.`)) {
+      try {
+        await deleteLicense(keyOrId);
+        onRefresh();
+      } catch (err: any) {
+        alert(err?.message || "Failed to delete license");
+      }
     }
   };
 
   const handleExtend = async (l: License, hours: number) => {
-    const currentExpiry = new Date(l.expires_at);
-    const base = currentExpiry > now ? currentExpiry : now;
-    const newExpiry = new Date(base.getTime() + hours * 3600 * 1000).toISOString();
-    await updateLicense(l.reg_key, { expires_at: newExpiry });
-    onRefresh();
+    try {
+      const currentExpiry = new Date(l.expires_at);
+      const base = currentExpiry > now ? currentExpiry : now;
+      const newExpiry = new Date(base.getTime() + hours * 3600 * 1000).toISOString();
+      await updateLicense(l.id || l.reg_key, { expires_at: newExpiry });
+      onRefresh();
+    } catch (err: any) {
+      alert(err?.message || "Failed to extend license");
+    }
   };
 
   return (
@@ -396,7 +417,7 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
                         <div className="flex items-center justify-end space-x-1">
                           {l.machine_id && (
                             <button
-                              onClick={() => handleResetMachine(l.reg_key)}
+                              onClick={() => handleResetMachine(l.id || l.reg_key)}
                               className="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-[11px] text-[#86868b] hover:text-white transition-colors"
                               title="Reset machine binding"
                             >
@@ -414,7 +435,7 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
 
                           {l.is_active && (
                             <button
-                              onClick={() => handleRevoke(l.reg_key)}
+                              onClick={() => handleRevoke(l.id || l.reg_key)}
                               className="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-red-500/10 text-[11px] text-[#86868b] hover:text-red-400 transition-colors"
                               title="Revoke license"
                             >
@@ -423,7 +444,7 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
                           )}
 
                           <button
-                            onClick={() => handleDelete(l.reg_key)}
+                            onClick={() => handleDelete(l.id || l.reg_key)}
                             className="p-1 rounded-lg text-[#86868b] hover:text-red-400 hover:bg-red-500/10 transition-colors"
                             title="Delete permanently"
                           >
