@@ -64,6 +64,13 @@ function requireId(id: string, op: string): void {
   }
 }
 
+function getLicenseFilter(idOrKey: string, op: string = "license operation") {
+  requireId(idOrKey, op);
+  const trimmed = idOrKey.trim();
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed);
+  return { column: isUuid ? "id" : "reg_key", value: trimmed };
+}
+
 // ── License CRUD ─────────────────────────────────────────────
 
 export async function fetchAllLicenses(): Promise<License[]> {
@@ -75,132 +82,236 @@ export async function fetchAllLicenses(): Promise<License[]> {
   return (data as License[]) || [];
 }
 
+export interface CreateLicenseParams {
+  custom_key?: string;
+  reg_key?: string;
+  regKey?: string;
+  days?: number;
+  trialDays?: number;
+  hours?: number;
+  trialHours?: number;
+  label?: string;
+  gemini_key?: string;
+  geminiKey?: string;
+  language?: string;
+  model?: string;
+}
+
 export async function createLicense(
-  regKey: string,
-  label: string,
-  trialDays: number,
-  trialHours: number,
-  geminiKey: string,
-  language: string,
-  model: string = "gemini"
-): Promise<{ data: License | null; error: string | null }> {
+  regKeyOrParams: string | CreateLicenseParams,
+  labelParam?: string,
+  trialDaysParam: number = 1,
+  trialHoursParam: number = 0,
+  geminiKeyParam?: string,
+  languageParam: string = "Java",
+  modelParam: string = "all"
+): Promise<{ success: boolean; data: License | null; error: string | null }> {
   try {
-    const reg_key = regKey.trim();
-    if (!/^\d{8}$/.test(reg_key)) return { data: null, error: "Key must be exactly 8 digits" };
+    let reg_key = "";
+    let label = labelParam;
+    let trialDays = trialDaysParam;
+    let trialHours = trialHoursParam;
+    let geminiKey = geminiKeyParam || "";
+    let language = languageParam;
+    let model = modelParam;
+
+    if (typeof regKeyOrParams === "object" && regKeyOrParams !== null) {
+      reg_key = (regKeyOrParams.custom_key || regKeyOrParams.reg_key || regKeyOrParams.regKey || "").trim();
+      label = regKeyOrParams.label;
+      trialDays = Number(regKeyOrParams.days ?? regKeyOrParams.trialDays ?? 1);
+      trialHours = Number(regKeyOrParams.hours ?? regKeyOrParams.trialHours ?? 0);
+      geminiKey = regKeyOrParams.gemini_key || regKeyOrParams.geminiKey || "";
+      language = regKeyOrParams.language || "Java";
+      model = regKeyOrParams.model || "all";
+    } else if (typeof regKeyOrParams === "string") {
+      reg_key = regKeyOrParams.trim();
+    }
+
+    if (!reg_key) {
+      reg_key = Math.floor(10000000 + Math.random() * 90000000).toString();
+    }
+
+    if (!/^\d{8}$/.test(reg_key)) {
+      return { success: false, data: null, error: "Key must be exactly 8 digits" };
+    }
+
     const totalMs = trialDays * 24 * 60 * 60 * 1000 + trialHours * 60 * 60 * 1000;
-    if (totalMs <= 0) return { data: null, error: "Duration must be greater than 0" };
+    if (totalMs <= 0) {
+      return { success: false, data: null, error: "Duration must be greater than 0" };
+    }
     const expires_at = new Date(Date.now() + totalMs).toISOString();
+
+    const cleanGeminiKey = typeof geminiKey === "string" && geminiKey.trim()
+      ? geminiKey.split(",").map((k) => k.trim()).filter(Boolean).join(",")
+      : null;
+
+    const cleanLabel = typeof label === "string" ? label.trim() || null : null;
 
     const { data, error } = await supabaseAdmin
       .from("licenses")
       .insert({
         reg_key,
-        label: label.trim() || null,
+        label: cleanLabel,
         expires_at,
-        gemini_key: geminiKey.split(",").map(k => k.trim()).filter(Boolean).join(",") || null,
-        language: language || "Java",
-        model
+        gemini_key: cleanGeminiKey,
+        language: (language || "Java").trim(),
+        model: (model || "all").trim(),
       })
       .select("id, reg_key, label, gemini_key, language, model, expires_at, is_active, machine_id, activated_at, created_at")
       .single();
 
     if (error) {
-      if (error.code === "23505") return { data: null, error: "Registration key already exists" };
-      return { data: null, error: error.message };
+      if (error.code === "23505") {
+        return { success: false, data: null, error: "Registration key already exists" };
+      }
+      return { success: false, data: null, error: error.message };
     }
-    return { data: data as License, error: null };
+    return { success: true, data: data as License, error: null };
   } catch (e: any) {
-    return { data: null, error: e?.message ?? "Unexpected server error" };
+    return { success: false, data: null, error: e?.message ?? "Unexpected server error" };
   }
 }
 
-export async function revokeLicense(id: string): Promise<void> {
-  requireId(id, "revokeLicense");
-  const { error } = await supabaseAdmin.from("licenses").update({ is_active: false }).eq("id", id);
+export async function revokeLicense(idOrKey: string): Promise<void> {
+  const { column, value } = getLicenseFilter(idOrKey, "revokeLicense");
+  const { error } = await supabaseAdmin.from("licenses").update({ is_active: false }).eq(column, value);
   if (error) throw new Error(error.message);
 }
 
 /** Hard-terminate: set expires_at to now so the client is blocked on next check */
-export async function terminateLicense(id: string): Promise<void> {
-  requireId(id, "terminateLicense");
+export async function terminateLicense(idOrKey: string): Promise<void> {
+  const { column, value } = getLicenseFilter(idOrKey, "terminateLicense");
   const { error } = await supabaseAdmin
     .from("licenses")
     .update({ expires_at: new Date().toISOString(), is_active: false })
-    .eq("id", id);
+    .eq(column, value);
   if (error) throw new Error(error.message);
 }
 
-export async function resetLicense(id: string): Promise<void> {
-  requireId(id, "resetLicense");
-  const { error } = await supabaseAdmin.from("licenses").update({ machine_id: null, activated_at: null }).eq("id", id);
+export async function resetLicense(idOrKey: string): Promise<void> {
+  const { column, value } = getLicenseFilter(idOrKey, "resetLicense");
+  const { error } = await supabaseAdmin.from("licenses").update({ machine_id: null, activated_at: null }).eq(column, value);
   if (error) throw new Error(error.message);
 }
 
-export async function deleteLicense(id: string): Promise<void> {
-  requireId(id, "deleteLicense");
-  const { error } = await supabaseAdmin.from("licenses").delete().eq("id", id);
+export async function deleteLicense(idOrKey: string): Promise<void> {
+  const { column, value } = getLicenseFilter(idOrKey, "deleteLicense");
+  const { error } = await supabaseAdmin.from("licenses").delete().eq(column, value);
   if (error) throw new Error(error.message);
+}
+
+export interface UpdateLicenseOptions {
+  label?: string;
+  gemini_key?: string;
+  geminiKey?: string;
+  language?: string;
+  expires_at?: string;
+  is_active?: boolean;
+  addDays?: number;
+  addHours?: number;
+  deductDays?: number;
+  deductHours?: number;
+  model?: string;
 }
 
 export async function updateLicense(
-  id: string,
-  label: string,
-  geminiKey: string,
-  language: string,
-  addDays: number = 0,
-  addHours: number = 0,
-  deductDays: number = 0,
-  deductHours: number = 0,
-  model: string = "gemini"
+  idOrKey: string,
+  optionsOrLabel?: string | UpdateLicenseOptions,
+  geminiKeyParam?: string,
+  languageParam?: string,
+  addDaysParam: number = 0,
+  addHoursParam: number = 0,
+  deductDaysParam: number = 0,
+  deductHoursParam: number = 0,
+  modelParam: string = "gemini"
 ): Promise<void> {
-  requireId(id, "updateLicense");
+  const { column, value } = getLicenseFilter(idOrKey, "updateLicense");
 
   const { data: current, error: fetchErr } = await supabaseAdmin
-    .from("licenses").select("expires_at").eq("id", id).single();
+    .from("licenses").select("expires_at").eq(column, value).single();
   if (fetchErr || !current) throw new Error("Failed to fetch license");
 
-  let newExpiresAt = current.expires_at;
-  const addMs    = (addDays * 24 * 60 * 60 + addHours * 60 * 60) * 1000;
-  const deductMs = (deductDays * 24 * 60 * 60 + deductHours * 60 * 60) * 1000;
+  let label: string | null | undefined = undefined;
+  let geminiKey: string | null | undefined = undefined;
+  let language: string | undefined = undefined;
+  let model: string | undefined = undefined;
+  let newExpiresAt: string = current.expires_at;
 
-  if (addMs > 0) {
-    const base = new Date(current.expires_at).getTime() > Date.now()
-      ? new Date(current.expires_at).getTime() : Date.now();
-    newExpiresAt = new Date(base + addMs).toISOString();
-  } else if (deductMs > 0) {
-    const current_ts = new Date(current.expires_at).getTime();
-    // Clamp: never go below now (would still leave the key technically expired but not negative)
-    const newTs = Math.max(Date.now(), current_ts - deductMs);
-    newExpiresAt = new Date(newTs).toISOString();
+  if (typeof optionsOrLabel === "object" && optionsOrLabel !== null) {
+    if (optionsOrLabel.expires_at) {
+      newExpiresAt = optionsOrLabel.expires_at;
+    }
+    if (optionsOrLabel.label !== undefined) {
+      label = optionsOrLabel.label ? optionsOrLabel.label.trim() : null;
+    }
+    if (optionsOrLabel.gemini_key !== undefined || optionsOrLabel.geminiKey !== undefined) {
+      const rawKey = optionsOrLabel.gemini_key ?? optionsOrLabel.geminiKey ?? "";
+      geminiKey = rawKey ? rawKey.split(",").map((k) => k.trim()).filter(Boolean).join(",") || null : null;
+    }
+    if (optionsOrLabel.language !== undefined) {
+      language = optionsOrLabel.language || "Java";
+    }
+    if (optionsOrLabel.model !== undefined) {
+      model = optionsOrLabel.model;
+    }
+    const addMs = ((optionsOrLabel.addDays || 0) * 24 * 60 * 60 + (optionsOrLabel.addHours || 0) * 60 * 60) * 1000;
+    const deductMs = ((optionsOrLabel.deductDays || 0) * 24 * 60 * 60 + (optionsOrLabel.deductHours || 0) * 60 * 60) * 1000;
+    if (addMs > 0) {
+      const base = new Date(current.expires_at).getTime() > Date.now()
+        ? new Date(current.expires_at).getTime() : Date.now();
+      newExpiresAt = new Date(base + addMs).toISOString();
+    } else if (deductMs > 0) {
+      const current_ts = new Date(current.expires_at).getTime();
+      const newTs = Math.max(Date.now(), current_ts - deductMs);
+      newExpiresAt = new Date(newTs).toISOString();
+    }
+  } else {
+    // Positional signature
+    label = typeof optionsOrLabel === "string" ? optionsOrLabel.trim() || null : null;
+    if (geminiKeyParam) {
+      geminiKey = geminiKeyParam.split(",").map((k) => k.trim()).filter(Boolean).join(",") || null;
+    }
+    language = languageParam || "Java";
+    model = modelParam || "gemini";
+    const addMs = (addDaysParam * 24 * 60 * 60 + addHoursParam * 60 * 60) * 1000;
+    const deductMs = (deductDaysParam * 24 * 60 * 60 + deductHoursParam * 60 * 60) * 1000;
+    if (addMs > 0) {
+      const base = new Date(current.expires_at).getTime() > Date.now()
+        ? new Date(current.expires_at).getTime() : Date.now();
+      newExpiresAt = new Date(base + addMs).toISOString();
+    } else if (deductMs > 0) {
+      const current_ts = new Date(current.expires_at).getTime();
+      const newTs = Math.max(Date.now(), current_ts - deductMs);
+      newExpiresAt = new Date(newTs).toISOString();
+    }
   }
+
+  const updatePayload: Record<string, any> = { expires_at: newExpiresAt };
+  if (label !== undefined) updatePayload.label = label;
+  if (geminiKey !== undefined) updatePayload.gemini_key = geminiKey;
+  if (language !== undefined) updatePayload.language = language;
+  if (model !== undefined) updatePayload.model = model;
 
   const { error } = await supabaseAdmin
     .from("licenses")
-    .update({
-      label: label.trim() || null,
-      // Per-key trim so " AIza1, AIza2 " → "AIza1,AIza2"
-      gemini_key: geminiKey.split(",").map(k => k.trim()).filter(Boolean).join(",") || null,
-      language: language || "Java",
-      expires_at: newExpiresAt,
-      model
-    })
-    .eq("id", id);
+    .update(updatePayload)
+    .eq(column, value);
   if (error) throw new Error(error.message);
 }
 
 /** Standalone language update — used by the inline dropdown in the table */
-export async function updateLanguage(id: string, language: string): Promise<void> {
-  requireId(id, "updateLanguage");
+export async function updateLanguage(idOrKey: string, language: string): Promise<void> {
+  const { column, value } = getLicenseFilter(idOrKey, "updateLanguage");
   const { error } = await supabaseAdmin
-    .from("licenses").update({ language: language || "Java" }).eq("id", id);
+    .from("licenses").update({ language: language || "Java" }).eq(column, value);
   if (error) throw new Error(error.message);
 }
 
 /** Standalone model/allotted provider update — used by inline dropdown in the table */
-export async function updateLicenseModel(id: string, model: string): Promise<void> {
-  requireId(id, "updateLicenseModel");
+export async function updateLicenseModel(idOrKey: string, model: string): Promise<void> {
+  const { column, value } = getLicenseFilter(idOrKey, "updateLicenseModel");
   const { error } = await supabaseAdmin
-    .from("licenses").update({ model: model || "all" }).eq("id", id);
+    .from("licenses").update({ model: model || "all" }).eq(column, value);
   if (error) throw new Error(error.message);
   const { invalidateLicenseAllotmentCache } = await import("@/lib/brain");
   invalidateLicenseAllotmentCache();
