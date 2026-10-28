@@ -26,7 +26,7 @@ export function BulkLicenseModal({ onClose, onSuccess, providers = [] }: BulkLic
     setLoading(true);
     setError("");
     try {
-      const res = await createBulkLicenses(count, trialDays, label, allottedModel);
+      const res = await createBulkLicenses(count, trialDays, (label || "").trim(), allottedModel);
       if (res.error) {
         setError(res.error);
       } else {
