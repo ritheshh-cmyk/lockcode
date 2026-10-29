@@ -15,15 +15,18 @@ import { BulkLicenseModal } from "./BulkLicenseModal";
 
 interface LicensesTabProps {
   licenses: License[];
+  setLicenses?: React.Dispatch<React.SetStateAction<License[]>>;
   providers?: Array<{ id: string; label: string; provider: string; model: string }>;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
+  dataLoading?: boolean;
 }
 
-export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTabProps) {
+export function LicensesTab({ licenses, setLicenses, providers = [], onRefresh, dataLoading }: LicensesTabProps) {
   const [filter, setFilter] = useState<"all" | "active" | "expired" | "revoked">("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const [recentlyCreatedKey, setRecentlyCreatedKey] = useState<string | null>(null);
 
   // Form State
   const [customKey, setCustomKey] = useState("");
@@ -123,9 +126,20 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
       });
 
       setSaving(false);
-      if (res.success) {
+      if (res.success && res.data) {
+        const newLicense = res.data;
+        if (setLicenses) {
+          setLicenses((prev) => [
+            newLicense,
+            ...prev.filter((x) => x.id !== newLicense.id && x.reg_key !== newLicense.reg_key),
+          ]);
+        }
+        setRecentlyCreatedKey(newLicense.reg_key);
+        setFilter("all");
+        setSearchTerm("");
         setModalOpen(false);
-        onRefresh();
+        setTimeout(() => setRecentlyCreatedKey(null), 8000);
+        void onRefresh();
       } else {
         setErrorMsg(res.error || "Failed to create license.");
       }
@@ -137,10 +151,17 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
 
   const handleRevoke = async (keyOrId: string) => {
     if (confirm(`Revoke license key ${keyOrId}?`)) {
+      const prevLicenses = [...licenses];
+      if (setLicenses) {
+        setLicenses((prev) =>
+          prev.map((x) => (x.id === keyOrId || x.reg_key === keyOrId ? { ...x, is_active: false } : x))
+        );
+      }
       try {
         await revokeLicense(keyOrId);
-        onRefresh();
+        void onRefresh();
       } catch (err: any) {
+        if (setLicenses) setLicenses(prevLicenses);
         alert(err?.message || "Failed to revoke license");
       }
     }
@@ -148,10 +169,17 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
 
   const handleResetMachine = async (keyOrId: string) => {
     if (confirm(`Reset hardware lock for ${keyOrId}? Client can activate on a new machine.`)) {
+      const prevLicenses = [...licenses];
+      if (setLicenses) {
+        setLicenses((prev) =>
+          prev.map((x) => (x.id === keyOrId || x.reg_key === keyOrId ? { ...x, machine_id: null, activated_at: null } : x))
+        );
+      }
       try {
         await resetLicense(keyOrId);
-        onRefresh();
+        void onRefresh();
       } catch (err: any) {
+        if (setLicenses) setLicenses(prevLicenses);
         alert(err?.message || "Failed to reset hardware lock");
       }
     }
@@ -159,23 +187,37 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
 
   const handleDelete = async (keyOrId: string) => {
     if (confirm(`Permanently delete license ${keyOrId}? This action cannot be undone.`)) {
+      const prevLicenses = [...licenses];
+      if (setLicenses) {
+        setLicenses((prev) => prev.filter((x) => x.id !== keyOrId && x.reg_key !== keyOrId));
+      }
       try {
         await deleteLicense(keyOrId);
-        onRefresh();
+        void onRefresh();
       } catch (err: any) {
+        if (setLicenses) setLicenses(prevLicenses);
         alert(err?.message || "Failed to delete license");
       }
     }
   };
 
   const handleExtend = async (l: License, hours: number) => {
+    const currentExpiry = new Date(l.expires_at);
+    const base = currentExpiry > now ? currentExpiry : now;
+    const newExpiry = new Date(base.getTime() + hours * 3600 * 1000).toISOString();
+    const prevLicenses = [...licenses];
+
+    // Instant optimistic update (0ms latency, eliminates INP block)
+    if (setLicenses) {
+      setLicenses((prev) =>
+        prev.map((x) => (x.id === l.id || x.reg_key === l.reg_key ? { ...x, expires_at: newExpiry } : x))
+      );
+    }
     try {
-      const currentExpiry = new Date(l.expires_at);
-      const base = currentExpiry > now ? currentExpiry : now;
-      const newExpiry = new Date(base.getTime() + hours * 3600 * 1000).toISOString();
       await updateLicense(l.id || l.reg_key, { expires_at: newExpiry });
-      onRefresh();
+      void onRefresh();
     } catch (err: any) {
+      if (setLicenses) setLicenses(prevLicenses);
       alert(err?.message || "Failed to extend license");
     }
   };
@@ -325,14 +367,32 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
                     );
                   }
 
+                  const isJustAdded = l.reg_key === recentlyCreatedKey;
+
                   return (
-                    <tr key={l.id} className="hover:bg-white/[0.02] transition-colors">
+                    <tr
+                      key={l.id || l.reg_key}
+                      className={`transition-all duration-500 ${
+                        isJustAdded
+                          ? "bg-emerald-500/[0.14] border-l-4 border-emerald-400"
+                          : "hover:bg-white/[0.02]"
+                      }`}
+                    >
                       {/* Key */}
                       <td className="py-3.5 px-4">
                         <div className="flex items-center space-x-2">
-                          <span className="font-mono text-sm font-bold tracking-wider text-white px-2 py-0.5 rounded-md bg-white/[0.06] border border-white/[0.08]">
+                          <span className={`font-mono text-sm font-bold tracking-wider px-2 py-0.5 rounded-md border ${
+                            isJustAdded
+                              ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                              : "text-white bg-white/[0.06] border-white/[0.08]"
+                          }`}>
                             {l.reg_key}
                           </span>
+                          {isJustAdded && (
+                            <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold tracking-wider animate-pulse">
+                              NEW
+                            </span>
+                          )}
                           {isOnline && (
                             <span
                               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold border border-emerald-500/30 animate-pulse"
@@ -384,8 +444,17 @@ export function LicensesTab({ licenses, providers = [], onRefresh }: LicensesTab
                           value={l.model || "all"}
                           onChange={async (e) => {
                             const newModel = e.target.value;
-                            await updateLicenseModel(l.id, newModel);
-                            onRefresh();
+                            if (setLicenses) {
+                              setLicenses((prev) =>
+                                prev.map((x) => (x.id === l.id || x.reg_key === l.reg_key ? { ...x, model: newModel } : x))
+                              );
+                            }
+                            try {
+                              await updateLicenseModel(l.id || l.reg_key, newModel);
+                              void onRefresh();
+                            } catch {
+                              void onRefresh();
+                            }
                           }}
                           className="bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] rounded-lg px-2 py-1 text-[11px] text-white focus:outline-none focus:border-[#0a84ff] font-medium transition-colors cursor-pointer"
                         >
