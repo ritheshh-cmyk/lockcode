@@ -209,8 +209,10 @@ export default function AdminControlCenter() {
           {activeTab === "licenses" && (
             <LicensesTab
               licenses={licenses}
+              setLicenses={setLicenses}
               providers={providers}
               onRefresh={loadAllData}
+              dataLoading={dataLoading}
             />
           )}
 
