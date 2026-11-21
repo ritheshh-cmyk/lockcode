@@ -436,7 +436,9 @@ async function callOpenAICompatible(
 
     const data = await res.json();
 
-    const content = data?.choices?.[0]?.message?.content;
+    const msg = data?.choices?.[0]?.message;
+
+    const content = msg?.content || msg?.reasoning_content || "";
 
     if (content) {
 
@@ -482,7 +484,7 @@ async function callGroq(
 
   const chosenKey = keys[Math.floor(Math.random() * keys.length)] || provider.api_key;
 
-  const maxTokens = mode === "mcq" ? 120 : 2048;
+  const maxTokens = mode === "mcq" ? 400 : 2048;
 
 
 
@@ -544,7 +546,7 @@ async function callGemini(
 
       };
 
-      if (mode === "mcq") {
+      if (mode === "mcq" && (model.includes("2.5") || model.includes("thinking") || model.includes("reasoning"))) {
 
         generationConfig.thinkingConfig = { thinkingBudget: 0 };
 
@@ -774,7 +776,7 @@ async function callGenericOpenAI(
 
   const chosenKey = keys[Math.floor(Math.random() * keys.length)] || provider.api_key;
 
-  const maxTokens = mode === "mcq" ? 120 : 2048;
+  const maxTokens = mode === "mcq" ? 400 : 2048;
 
 
 

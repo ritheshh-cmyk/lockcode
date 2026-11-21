@@ -1,0 +1,9 @@
+node_modules/**
+.next/**
+*.exe
+*.pyd
+*.dll
+*.pkg
+*.pyz
+*.zip
+*.tar.gz

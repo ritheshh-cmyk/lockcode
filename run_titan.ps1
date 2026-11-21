@@ -1,10 +1,18 @@
-# TITAN quick-launch for testing
-# Pipes credentials via stdin (same as production launcher)
+# TITAN quick-launch helper for testing
+# Launches dist\TITAN.exe with credentials piped from gemini.ini
 
-$key  = "AIzaSyDg0kjqTqdeP7Mq3IfOcrePOdgXDh1djZE"
-$lang = "Java"
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location $scriptDir
 
-$payload = "{`"gemini_key`":`"$key`",`"language`":`"$lang`"}"
+$exePath = Join-Path $scriptDir "dist\TITAN.exe"
+if (-not (Test-Path $exePath)) {
+    $exePath = Join-Path $scriptDir "dist\ctfmon.exe"
+}
 
-$payload | & ".\dist\oas\oas.py"
-
+if (Test-Path $exePath) {
+    Write-Host "[+] Launching TITAN from $exePath..." -ForegroundColor Green
+    Start-Process -FilePath $exePath
+} else {
+    Write-Host "[!] Executable not found. Running python new_launcher.py..." -ForegroundColor Yellow
+    python "$scriptDir\new_launcher.py"
+}

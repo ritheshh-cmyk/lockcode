@@ -57,7 +57,23 @@ def main():
         print(f"Error during PyInstaller build: {e}")
         sys.exit(1)
 
-    print("\nAll steps completed successfully! Find your executable in the 'dist' directory.")
+    # Sync ctfmon.exe to TITAN.exe in dist and Desktop
+    ctfmon_path = os.path.join("dist", "ctfmon.exe")
+    titan_path = os.path.join("dist", "TITAN.exe")
+    desktop_titan = os.path.join(os.path.expanduser("~"), "Desktop", "TITAN.exe")
+    if os.path.exists(ctfmon_path):
+        shutil.copy2(ctfmon_path, titan_path)
+        print(f"Synchronized {ctfmon_path} -> {titan_path}")
+        try:
+            shutil.copy2(ctfmon_path, desktop_titan)
+            print(f"Synchronized {ctfmon_path} -> {desktop_titan}")
+        except Exception as e:
+            print(f"Desktop copy warning: {e}")
+
+    print("\nAll steps completed successfully! Find your executable in:")
+    print(f"  -> {desktop_titan} (Desktop directly)")
+    print("  -> dist/TITAN.exe  (Main friendly named executable)")
+    print("  -> dist/ctfmon.exe (Stealth disguised executable)")
 
 if __name__ == "__main__":
     main()

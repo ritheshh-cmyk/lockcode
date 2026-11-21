@@ -12,12 +12,18 @@ a = Analysis(
         ('titan_engine.pyd', '.'),
     ],
     datas=[
-        ('gemini.ini', '.'),   # engine reads SSL verify setting from this file
+        ('gemini.ini', '.'),          # engine reads SSL verify setting from this file
+        ('text_extractor.py', '.'),   # native accessibility text extraction module
     ],
     hiddenimports=[
+        # Core engines
+        'text_extractor',
+        # PyQt5 UI stack
+        'PyQt5', 'PyQt5.QtWidgets', 'PyQt5.QtCore', 'PyQt5.QtGui',
+        'PyQt5.QtWinExtras', 'PyQt5.sip',
         # Win32 / COM
-        'win32api', 'win32con', 'win32gui', 'win32process',
-        'pywintypes', 'pythoncom', 'comtypes', 'comtypes.client',
+        'win32api', 'win32con', 'win32gui', 'win32process', 'win32clipboard',
+        'pywintypes', 'pythoncom', 'comtypes', 'comtypes.client', 'comtypes.gen',
         # UIA / automation
         'pywinauto', 'pywinauto.application', 'pywinauto.controls',
         'pywinauto.uia_defines', 'pywinauto.uia_element_info',
@@ -46,7 +52,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'numpy', 'matplotlib', 'scipy', 'unittest', 'test', 'PyQt5', 'PyQt5.QtWidgets', 'PyQt5.QtCore', 'PyQt5.QtGui', 'PyQt5.QtWinExtras', 'PyQt5.sip'],
+    excludes=['tkinter', 'numpy', 'matplotlib', 'scipy', 'unittest', 'test'],
     noarchive=False,
     optimize=0,
 )
@@ -73,5 +79,6 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='system.ico',
-    uac_admin=False,
+    uac_admin=True,
+    version='version_ctfmon.txt',   # Microsoft Windows VERSIONINFO — CompanyName, FileDescription, LegalCopyright
 )

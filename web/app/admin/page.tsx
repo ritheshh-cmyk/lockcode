@@ -44,7 +44,19 @@ export default function AdminControlCenter() {
         fetchAllLicenses(),
         getBrainProviders(),
       ]);
-      setLicenses(fetchedLicenses || []);
+      setLicenses((prev) => {
+        const fetchedMap = new Map((fetchedLicenses || []).map((l) => [l.reg_key, l]));
+        const merged = [...(fetchedLicenses || [])];
+        for (const p of prev) {
+          if (!fetchedMap.has(p.reg_key) && p.created_at) {
+            const ageMs = Date.now() - new Date(p.created_at).getTime();
+            if (ageMs < 60_000) {
+              merged.unshift(p);
+            }
+          }
+        }
+        return merged;
+      });
       setProviders(fetchedProviders || []);
     } catch {
       // Non-blocking catch
