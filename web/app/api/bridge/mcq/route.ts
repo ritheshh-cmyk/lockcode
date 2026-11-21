@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeBrainQuery } from "@/lib/brain";
 import { sanitizePrompt } from "@/lib/sanitize";
+import { validateLicenseKey } from "@/lib/license-validator";
 
 export const runtime = "nodejs";
 export const maxDuration = 45;
@@ -20,7 +21,15 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Parse payload
-  let body: { question?: string; options?: string[]; prompt?: string; regKey?: string; reg_key?: string };
+  let body: {
+    question?: string;
+    options?: string[];
+    prompt?: string;
+    regKey?: string;
+    reg_key?: string;
+    optionsCount?: number;
+    options_count?: number;
+  };
   try {
     body = await req.json();
   } catch {
@@ -28,8 +37,23 @@ export async function POST(req: NextRequest) {
   }
 
   const regKey = (body.regKey || body.reg_key || req.headers.get("x-reg-key") || "anonymous").trim();
+
+  // License validation (killswitch enforcement)
+  const licenseError = await validateLicenseKey(regKey);
+  if (licenseError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: `License validation failed: ${licenseError}`,
+        killswitch: true,
+        latency_ms: Date.now() - startTime,
+      },
+      { status: 403 }
+    );
+  }
   const rawQuestion = (body.question || body.prompt || "").trim();
   const questionText = sanitizePrompt(rawQuestion);
+  const optionsCount = body.optionsCount || body.options_count || (body.options?.length || 4);
 
   if (!questionText) {
     return NextResponse.json({ success: false, error: "Question text is required" }, { status: 400 });
@@ -55,6 +79,7 @@ export async function POST(req: NextRequest) {
     prompt: formattedPrompt,
     systemPrompt: systemInstruction,
     mode: "mcq",
+    optionsCount,
     regKey,
   });
 

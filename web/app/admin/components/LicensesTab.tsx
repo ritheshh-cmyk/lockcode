@@ -38,6 +38,18 @@ export function LicensesTab({ licenses, setLicenses, providers = [], onRefresh, 
   const [errorMsg, setErrorMsg] = useState("");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  // Edit License Modal State
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingLicense, setEditingLicense] = useState<License | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [editLanguage, setEditLanguage] = useState("Java");
+  const [editModel, setEditModel] = useState("all");
+  const [editExpiresAt, setEditExpiresAt] = useState("");
+  const [editIsActive, setEditIsActive] = useState(true);
+  const [editGeminiKey, setEditGeminiKey] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editErrorMsg, setEditErrorMsg] = useState("");
+
   // Live client presence state
   const [presence, setPresence] = useState<{ activeNow: string[]; activeToday: string[]; totalSeen: number }>({
     activeNow: [],
@@ -109,6 +121,82 @@ export function LicensesTab({ licenses, setLicenses, providers = [], onRefresh, 
     setLabel("");
     setErrorMsg("");
     setModalOpen(true);
+  };
+
+  const handleOpenEditModal = (l: License) => {
+    setEditingLicense(l);
+    setEditLabel(l.label || "");
+    setEditLanguage(l.language || "Java");
+    setEditModel(l.model || "all");
+    try {
+      const d = new Date(l.expires_at);
+      const iso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      setEditExpiresAt(iso);
+    } catch {
+      setEditExpiresAt("");
+    }
+    setEditIsActive(l.is_active);
+    setEditGeminiKey(l.gemini_key || "");
+    setEditErrorMsg("");
+    setEditModalOpen(true);
+  };
+
+  const handleEditQuickExtend = (hours: number) => {
+    const current = editExpiresAt ? new Date(editExpiresAt) : (editingLicense ? new Date(editingLicense.expires_at) : new Date());
+    const base = current.getTime() > Date.now() ? current.getTime() : Date.now();
+    const newDate = new Date(base + hours * 3600 * 1000);
+    const iso = new Date(newDate.getTime() - newDate.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    setEditExpiresAt(iso);
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLicense) return;
+    setEditSaving(true);
+    setEditErrorMsg("");
+
+    try {
+      let finalExpiresAt = editingLicense.expires_at;
+      if (editExpiresAt) {
+        finalExpiresAt = new Date(editExpiresAt).toISOString();
+      }
+
+      const updatedFields = {
+        label: editLabel.trim() || undefined,
+        language: editLanguage.trim() || "Java",
+        model: editModel.trim() || "all",
+        expires_at: finalExpiresAt,
+        is_active: editIsActive,
+        gemini_key: editGeminiKey.trim() || undefined,
+      };
+
+      if (setLicenses) {
+        setLicenses((prev) =>
+          prev.map((x) =>
+            x.id === editingLicense.id || x.reg_key === editingLicense.reg_key
+              ? {
+                  ...x,
+                  label: editLabel.trim() || null,
+                  language: editLanguage.trim() || "Java",
+                  model: editModel.trim() || "all",
+                  expires_at: finalExpiresAt,
+                  is_active: editIsActive,
+                  gemini_key: editGeminiKey.trim() || null,
+                }
+              : x
+          )
+        );
+      }
+
+      await updateLicense(editingLicense.id || editingLicense.reg_key, updatedFields);
+      setEditSaving(false);
+      setEditModalOpen(false);
+      setEditingLicense(null);
+      void onRefresh();
+    } catch (err: any) {
+      setEditSaving(false);
+      setEditErrorMsg(err?.message || "Failed to update license.");
+    }
   };
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -484,6 +572,15 @@ export function LicensesTab({ licenses, setLicenses, providers = [], onRefresh, 
                       {/* Actions */}
                       <td className="py-3.5 px-4 text-right">
                         <div className="flex items-center justify-end space-x-1">
+                          <button
+                            onClick={() => handleOpenEditModal(l)}
+                            className="px-2 py-1 rounded-lg bg-[#0a84ff]/10 hover:bg-[#0a84ff]/20 text-[11px] text-[#0a84ff] hover:text-white transition-colors flex items-center space-x-1"
+                            title="Edit license details"
+                          >
+                            <span className="material-symbols-outlined text-[13px]">edit</span>
+                            <span>Edit</span>
+                          </button>
+
                           {l.machine_id && (
                             <button
                               onClick={() => handleResetMachine(l.id || l.reg_key)}
@@ -560,6 +657,12 @@ export function LicensesTab({ licenses, setLicenses, providers = [], onRefresh, 
             <form onSubmit={handleCreate} className="flex flex-col flex-1 overflow-hidden min-h-0">
               {/* Scrollable Form Body */}
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4 smooth-touch-scroll">
+                {errorMsg && (
+                  <div className="p-3.5 rounded-xl bg-red-500/20 border border-red-500/40 text-xs text-red-300 flex items-center space-x-2 shadow-lg shadow-red-500/10">
+                    <span className="material-symbols-outlined text-[18px] text-red-400">error</span>
+                    <span className="font-semibold">{errorMsg}</span>
+                  </div>
+                )}
                 {/* Key Input with Randomize */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
@@ -697,6 +800,244 @@ export function LicensesTab({ licenses, setLicenses, providers = [], onRefresh, 
                 >
                   {saving && <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>}
                   <span>Create License</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit License Modal ── */}
+      {editModalOpen && editingLicense && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-2xl animate-fade-in overflow-y-auto">
+          <div className="relative w-full max-w-lg max-h-[92vh] flex flex-col rounded-3xl bg-[#1c1c1e] border border-white/[0.14] shadow-2xl shadow-black/90 backdrop-blur-3xl ios-modal-enter my-auto overflow-hidden">
+            {/* Header */}
+            <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-white/[0.08] bg-white/[0.02]">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-8 h-8 rounded-xl bg-[#0a84ff]/20 text-[#0a84ff] border border-[#0a84ff]/30 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-[18px]">edit</span>
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-sm sm:text-base font-semibold text-white tracking-tight">
+                      Edit License
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-md bg-white/[0.08] font-mono font-bold text-xs text-white">
+                      {editingLicense.reg_key}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#86868b]">Update validity, student identity, and AI routing policy.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setEditModalOpen(false); setEditingLicense(null); }}
+                className="w-8 h-8 rounded-full bg-white/[0.06] hover:bg-white/[0.12] text-[#86868b] hover:text-white flex items-center justify-center transition-colors ios-press-subtle"
+                title="Close dialog"
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="flex flex-col flex-1 overflow-hidden min-h-0">
+              {/* Scrollable Form Body */}
+              <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4 smooth-touch-scroll">
+                {editErrorMsg && (
+                  <div className="p-3.5 rounded-xl bg-red-500/20 border border-red-500/40 text-xs text-red-300 flex items-center space-x-2 shadow-lg shadow-red-500/10">
+                    <span className="material-symbols-outlined text-[18px] text-red-400">error</span>
+                    <span className="font-semibold">{editErrorMsg}</span>
+                  </div>
+                )}
+
+                {/* Status Toggle & Hardware Binding in Bento layout */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Status Toggle */}
+                  <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.08]">
+                    <label className="block text-[11px] font-medium text-[#86868b] mb-2">License State</label>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditIsActive(true)}
+                        className={`flex-1 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                          editIsActive
+                            ? "bg-emerald-500 text-black shadow-lg shadow-emerald-500/20"
+                            : "bg-white/[0.04] text-[#86868b] hover:text-white"
+                        }`}
+                      >
+                        Active
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditIsActive(false)}
+                        className={`flex-1 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                          !editIsActive
+                            ? "bg-red-500 text-white shadow-lg shadow-red-500/20"
+                            : "bg-white/[0.04] text-[#86868b] hover:text-white"
+                        }`}
+                      >
+                        Revoked
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Hardware Lock Status */}
+                  <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.08]">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-[11px] font-medium text-[#86868b]">Hardware Lock</label>
+                      {editingLicense.machine_id && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (confirm("Reset hardware lock for this license now?")) {
+                              await handleResetMachine(editingLicense.id || editingLicense.reg_key);
+                              setEditingLicense({ ...editingLicense, machine_id: null, activated_at: null });
+                            }
+                          }}
+                          className="text-[10px] text-amber-400 hover:underline font-medium"
+                        >
+                          Reset Lock
+                        </button>
+                      )}
+                    </div>
+                    <div className="font-mono text-xs text-white/80 truncate">
+                      {editingLicense.machine_id ? (
+                        <span className="text-emerald-400 font-semibold flex items-center space-x-1">
+                          <span className="material-symbols-outlined text-[13px]">lock</span>
+                          <span className="truncate">{editingLicense.machine_id}</span>
+                        </span>
+                      ) : (
+                        <span className="text-white/40 italic">Not locked to any device</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Student Label / Identifier */}
+                <div>
+                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                    Label / Student Name / Note
+                  </label>
+                  <input
+                    type="text"
+                    value={editLabel}
+                    onChange={(e) => setEditLabel(e.target.value)}
+                    placeholder="e.g. John Doe (Section A)"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white placeholder-white/20 focus:outline-none focus:border-[#0a84ff]"
+                  />
+                </div>
+
+                {/* Expiry Date & Time + Quick Extend */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-medium text-[#86868b]">
+                      Expiration Date & Time
+                    </label>
+                    <span className="text-[10px] text-white/40">Local Timezone</span>
+                  </div>
+                  <input
+                    type="datetime-local"
+                    value={editExpiresAt}
+                    onChange={(e) => setEditExpiresAt(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white focus:outline-none focus:border-[#0a84ff]"
+                    required
+                  />
+                  <div className="flex items-center space-x-2 mt-2">
+                    <span className="text-[10px] text-[#86868b]">Quick add:</span>
+                    {[
+                      { label: "+24 Hours", hours: 24 },
+                      { label: "+3 Days", hours: 72 },
+                      { label: "+7 Days", hours: 168 },
+                      { label: "+30 Days", hours: 720 },
+                    ].map((ext) => (
+                      <button
+                        key={ext.hours}
+                        type="button"
+                        onClick={() => handleEditQuickExtend(ext.hours)}
+                        className="px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[10px] font-medium text-white transition-colors"
+                      >
+                        {ext.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Default Language */}
+                <div>
+                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                    Assigned Programming Language
+                  </label>
+                  <select
+                    value={editLanguage}
+                    onChange={(e) => setEditLanguage(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
+                  >
+                    <option value="Java" className="bg-[#1c1c1e]">Java</option>
+                    <option value="Python" className="bg-[#1c1c1e]">Python</option>
+                    <option value="C++" className="bg-[#1c1c1e]">C++</option>
+                    <option value="C#" className="bg-[#1c1c1e]">C#</option>
+                    <option value="JavaScript" className="bg-[#1c1c1e]">JavaScript</option>
+                  </select>
+                </div>
+
+                {/* Allotted AI Provider */}
+                <div>
+                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                    Allotted AI Provider / Routing Policy
+                  </label>
+                  <select
+                    value={editModel}
+                    onChange={(e) => setEditModel(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs text-white focus:outline-none focus:border-[#0a84ff]"
+                  >
+                    <option value="all" className="bg-[#1c1c1e]">✦ Auto (All Providers / Brain Cascade)</option>
+                    <option value="gemini" className="bg-[#1c1c1e]">Gemini Pool Only</option>
+                    <option value="groq" className="bg-[#1c1c1e]">Groq Only (⚡ Llama-3.3)</option>
+                    <option value="openai" className="bg-[#1c1c1e]">OpenAI Only</option>
+                    <option value="deepseek" className="bg-[#1c1c1e]">DeepSeek Only</option>
+                    <option value="anthropic" className="bg-[#1c1c1e]">Anthropic Only</option>
+                    {providers && providers.length > 0 && (
+                      <optgroup label="Specific Pinned Providers" className="bg-[#1c1c1e] text-white/50">
+                        {providers.map((p) => (
+                          <option key={p.id} value={p.id} className="bg-[#1c1c1e] text-white">
+                            Pinned: {p.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                </div>
+
+                {/* Dedicated Gemini API Key (Optional) */}
+                <div>
+                  <label className="block text-xs font-medium text-[#86868b] mb-1.5">
+                    Custom Dedicated Gemini API Key <span className="text-[10px] text-white/30 font-normal">(Optional override)</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={editGeminiKey}
+                    onChange={(e) => setEditGeminiKey(e.target.value)}
+                    placeholder="Leave empty to use centralized pool"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-white/[0.06] border border-white/[0.1] text-xs font-mono text-white focus:outline-none focus:border-[#0a84ff]"
+                  />
+                </div>
+              </div>
+
+              {/* Pinned Footer */}
+              <div className="shrink-0 flex items-center justify-end space-x-2.5 px-6 py-4 border-t border-white/[0.08] bg-white/[0.02]">
+                <button
+                  type="button"
+                  onClick={() => { setEditModalOpen(false); setEditingLicense(null); }}
+                  className="px-4 py-2 rounded-xl text-xs font-medium text-[#86868b] hover:text-white hover:bg-white/[0.06] transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editSaving}
+                  className="apple-btn-primary px-5 py-2 text-xs font-semibold flex items-center space-x-1.5 disabled:opacity-50 ios-press"
+                >
+                  {editSaving && <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>}
+                  <span>Save Changes</span>
                 </button>
               </div>
             </form>

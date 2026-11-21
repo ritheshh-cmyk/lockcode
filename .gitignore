@@ -46,3 +46,7 @@ scratch/
 Thumbs.db
 .vscode/
 .idea/
+
+*.lib
+*.pdb
+*.exp

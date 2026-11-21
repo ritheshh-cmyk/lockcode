@@ -1,5 +1,7 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+
 import { supabaseAdmin } from "@/lib/supabase";
 
 // ── Auth ────────────────────────────────────────────────────
@@ -166,6 +168,7 @@ export async function createLicense(
       }
       return { success: false, data: null, error: error.message };
     }
+    revalidatePath("/admin");
     return { success: true, data: data as License, error: null };
   } catch (e: any) {
     return { success: false, data: null, error: e?.message ?? "Unexpected server error" };
@@ -176,6 +179,12 @@ export async function revokeLicense(idOrKey: string): Promise<void> {
   const { column, value } = getLicenseFilter(idOrKey, "revokeLicense");
   const { error } = await supabaseAdmin.from("licenses").update({ is_active: false }).eq(column, value);
   if (error) throw new Error(error.message);
+  try {
+    const { invalidateLicenseValidationCache } = await import("@/lib/license-validator");
+    invalidateLicenseValidationCache();
+    const { invalidateLicenseAllotmentCache } = await import("@/lib/brain");
+    invalidateLicenseAllotmentCache();
+  } catch {}
 }
 
 /** Hard-terminate: set expires_at to now so the client is blocked on next check */
@@ -186,6 +195,12 @@ export async function terminateLicense(idOrKey: string): Promise<void> {
     .update({ expires_at: new Date().toISOString(), is_active: false })
     .eq(column, value);
   if (error) throw new Error(error.message);
+  try {
+    const { invalidateLicenseValidationCache } = await import("@/lib/license-validator");
+    invalidateLicenseValidationCache();
+    const { invalidateLicenseAllotmentCache } = await import("@/lib/brain");
+    invalidateLicenseAllotmentCache();
+  } catch {}
 }
 
 export async function resetLicense(idOrKey: string): Promise<void> {
@@ -198,6 +213,12 @@ export async function deleteLicense(idOrKey: string): Promise<void> {
   const { column, value } = getLicenseFilter(idOrKey, "deleteLicense");
   const { error } = await supabaseAdmin.from("licenses").delete().eq(column, value);
   if (error) throw new Error(error.message);
+  try {
+    const { invalidateLicenseValidationCache } = await import("@/lib/license-validator");
+    invalidateLicenseValidationCache();
+    const { invalidateLicenseAllotmentCache } = await import("@/lib/brain");
+    invalidateLicenseAllotmentCache();
+  } catch {}
 }
 
 export interface UpdateLicenseOptions {
@@ -291,12 +312,22 @@ export async function updateLicense(
   if (geminiKey !== undefined) updatePayload.gemini_key = geminiKey;
   if (language !== undefined) updatePayload.language = language;
   if (model !== undefined) updatePayload.model = model;
+  if (typeof optionsOrLabel === "object" && optionsOrLabel !== null && optionsOrLabel.is_active !== undefined) {
+    updatePayload.is_active = optionsOrLabel.is_active;
+  }
 
   const { error } = await supabaseAdmin
     .from("licenses")
     .update(updatePayload)
     .eq(column, value);
   if (error) throw new Error(error.message);
+  try {
+    const { invalidateLicenseValidationCache } = await import("@/lib/license-validator");
+    invalidateLicenseValidationCache();
+    const { invalidateLicenseAllotmentCache } = await import("@/lib/brain");
+    invalidateLicenseAllotmentCache();
+  } catch {}
+  revalidatePath("/admin");
 }
 
 /** Standalone language update — used by the inline dropdown in the table */
@@ -305,6 +336,7 @@ export async function updateLanguage(idOrKey: string, language: string): Promise
   const { error } = await supabaseAdmin
     .from("licenses").update({ language: language || "Java" }).eq(column, value);
   if (error) throw new Error(error.message);
+  revalidatePath("/admin");
 }
 
 /** Standalone model/allotted provider update — used by inline dropdown in the table */
@@ -315,6 +347,7 @@ export async function updateLicenseModel(idOrKey: string, model: string): Promis
   if (error) throw new Error(error.message);
   const { invalidateLicenseAllotmentCache } = await import("@/lib/brain");
   invalidateLicenseAllotmentCache();
+  revalidatePath("/admin");
 }
 
 
@@ -806,6 +839,7 @@ export async function createBulkLicenses(
 
     const { error } = await supabaseAdmin.from("licenses").insert(rows);
     if (error) return { created: 0, keys: [], error: error.message };
+    revalidatePath("/admin");
     return { created: rows.length, keys };
   } catch (e: any) {
     return { created: 0, keys: [], error: e?.message ?? "Unknown error" };

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getActiveProviders, AIProviderRecord, getUserAllottedProvider, executeBrainQuery } from "@/lib/brain";
 import { sanitizePrompt } from "@/lib/sanitize";
+import { validateLicenseKey } from "@/lib/license-validator";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -19,11 +20,22 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Parse request
-  let body: { prompt?: string; question?: string; systemPrompt?: string; model?: string; regKey?: string; mode?: string };
+  let body: { prompt?: string; question?: string; systemPrompt?: string; model?: string; regKey?: string; reg_key?: string; mode?: string };
   try {
     body = await req.json();
   } catch {
     return new NextResponse("Invalid JSON", { status: 400 });
+  }
+
+  const regKey = (body.regKey || body.reg_key || req.headers.get("x-reg-key") || "anonymous").trim();
+
+  // 3. Per-query license validation (payload-bound instant killswitch)
+  const licenseError = await validateLicenseKey(regKey);
+  if (licenseError) {
+    return NextResponse.json(
+      { success: false, error: `License validation failed: ${licenseError}`, killswitch: true },
+      { status: 403 }
+    );
   }
 
   const userPrompt = sanitizePrompt((body.prompt || body.question || "").trim());
@@ -33,8 +45,7 @@ export async function POST(req: NextRequest) {
 
   const systemPrompt = (body.systemPrompt || "").trim();
 
-  // 3. Resolve active providers from Brain with user license allotment
-  const regKey = (body.regKey || req.headers.get("x-reg-key") || "anonymous").trim();
+  // 4. Resolve active providers from Brain with user license allotment
   let providers = await getActiveProviders();
   const allottedModel = await getUserAllottedProvider(regKey);
   if (allottedModel && allottedModel !== "all" && allottedModel !== "auto") {
@@ -160,27 +171,35 @@ async function openProviderStream(
     else endpoint = "https://api.openai.com/v1/chat/completions";
   }
 
-  const primaryKey = provider.api_key.split(",")[0]?.trim();
-  if (!primaryKey) return null;
+  const keys = provider.api_key.split(",").map((k) => k.trim()).filter(Boolean);
+  if (keys.length === 0) return null;
 
   const messages: Array<{ role: string; content: string }> = [];
   if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
   messages.push({ role: "user", content: prompt });
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${primaryKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      stream: true,
-      temperature: 0.2,
-      max_tokens: 4096,
-    }),
-  });
+  for (const key of keys) {
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: true,
+          temperature: 0.2,
+          max_tokens: 4096,
+        }),
+      });
 
-  return res.ok && res.body ? res : null;
+      if (res.ok && res.body) return res;
+    } catch {
+      // try next key in pool
+    }
+  }
+
+  return null;
 }

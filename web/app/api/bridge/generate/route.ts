@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeBrainQuery, getActiveProviders } from "@/lib/brain";
 import { supabaseAdmin } from "@/lib/supabase";
+import { validateLicenseKey } from "@/lib/license-validator";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -38,35 +39,7 @@ function extractSystemPromptFromInstruction(instruction?: { parts?: Array<{ text
   return instruction.parts.map((p) => p.text || "").join("\n").trim();
 }
 
-/**
- * Validate license per query (payload-bound killswitch).
- * Returns null if valid, error string if invalid.
- */
-const licenseValidationCache = new Map<string, { err: string | null; expiry: number }>();
 
-async function validateLicenseKey(regKey: string): Promise<string | null> {
-  if (!regKey || regKey === "anonymous") return null; // no validation for anonymous
-  const now = Date.now();
-  const cached = licenseValidationCache.get(regKey);
-  if (cached && cached.expiry > now) {
-    return cached.err;
-  }
-  try {
-    const { data, error } = await supabaseAdmin
-      .from("licenses")
-      .select("is_active, expires_at")
-      .eq("reg_key", regKey)
-      .single();
-    let err: string | null = null;
-    if (error || !data) err = "License not found";
-    else if (!data.is_active) err = "License revoked";
-    else if (data.expires_at && new Date(data.expires_at) < new Date()) err = "License expired";
-    licenseValidationCache.set(regKey, { err, expiry: now + 60_000 });
-    return err;
-  } catch {
-    return null; // fail open (don't block on DB error)
-  }
-}
 
 /**
  * Diagnostic & Health Check GET Handler
